@@ -184,6 +184,14 @@ public sealed class NetworkConfig
     public List<string> News { get; set; } = new() { "tass", "bbc", "reddit:worldnews" };
     /// <summary>Каналы телетекста по id.</summary>
     public List<string> Teletext { get; set; } = new() { "svt", "nos" };
+    /// <summary>Координаты города (WGS84). Заданы — геокодер не нужен (например, когда его режет сеть/провайдер).
+    /// null — берутся из геокодера, а при его недоступности из последнего кеша погоды.</summary>
+    public double? Lat { get; set; }
+    public double? Lon { get; set; }
+    /// <summary>«Спокойные новости»: отсеивать заголовки про войну и насилие (стоп-слова в Phosphor.Data), разбавлять лёгкими лентами.</summary>
+    public bool CalmNews { get; set; } = true;
+    /// <summary>Дополнительные стоп-слова к встроенному списку (регистр не важен, совпадение по началу слова).</summary>
+    public List<string> CalmExtraWords { get; set; } = new();
 }
 
 public sealed class ExitConfig
