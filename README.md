@@ -53,6 +53,16 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 
 Пример: `Phosphor.exe --shot shot.png --scene pipes --preset rave --size 1280x720`
 
+Переменные окружения для `--shot` (воспроизводимые снимки и проверка состояний):
+
+| Переменная | Пример | Значение |
+|---|---|---|
+| `PHOSPHOR_SHOT_TIME` | `14:00` | Время дирижёра (день/ночь). По умолчанию 04:20 — ночь |
+| `PHOSPHOR_CACHE_DIR` | `.build\satcache` | Каталог кеша данных вместо `%LOCALAPPDATA%\Phosphor\cache` (пустой каталог = «первый запуск») |
+| `PHOSPHOR_FAKE_BPM` | `128` | Синтетический бит; дирижёр меняет сцены по фразам |
+| `PHOSPHOR_OVERLAY` | `hud` | Включить оверлей в снимке |
+| `PHOSPHOR_SWITCH_AT` / `_TO` / `_KIND` | `120` / `plasma` / `vhsnoise` | Смена сцены на кадре N — проверка переходов (`_KIND`: fade, vhsnoise, glitch, cut) |
+
 ## Конфиг `phosphor.json`
 
 Файл лежит рядом с exe (`%LOCALAPPDATA%\Programs\Phosphor\phosphor.json` после установки). Отсутствующие поля получают значения по умолчанию. Битый файл — предупреждение в логе и встроенные настройки.
