@@ -23,6 +23,16 @@ internal static class Shot
         using var presenter = new Presenter(gl);
         var scenes = Catalog.Scenes();
         using var data = DataWiring.CreateHub(config, online: config.Network.Enabled, log);
+        // Датчики без фонового потока: два синхронных замера с паузой 500 мс реального времени —
+        // первый задаёт базу для дельт (CPU/сеть/диск), второй — полноценный снимок к концу прогона.
+        using var probe = new SystemProbe(m => log.Warn(m));
+        probe.SampleNow();
+        Thread.Sleep(500);
+        probe.SampleNow();
+        data.RegisterLive("system", () => probe.TryGetLive());
+        PhosphorSnapshot? phSnap = null;
+        long phVer = 0;
+        data.RegisterLive("phosphor", () => phSnap is null ? null : (phSnap, phVer));
         var overlays = Catalog.Overlays();
         using var shared = new Shared(gl, config, scenes, Catalog.Filters(), overlays, data, new Random(args.Seed), log) { GridPasses = Catalog.GridPasses() };
 
@@ -33,7 +43,8 @@ internal static class Shot
         if (scenes.Create(sceneId) is IDataScene ds)
         {
             var wait = System.Diagnostics.Stopwatch.StartNew();
-            var keys = ds.DataKeys.Where(k => k != "clock").ToList();
+            // "phosphor" публикует сам цикл кадров ниже — его не ждём.
+            var keys = ds.DataKeys.Where(k => k != "clock" && k != "phosphor").ToList();
             while (wait.Elapsed.TotalSeconds < 25 && keys.Any(k => !data.TryGet(k, out _, out _))) Thread.Sleep(200);
             log.Info($"shot: данные {string.Join(", ", keys.Select(k => k + (data.TryGet(k, out _, out _) ? "=есть" : "=нет")))} за {wait.Elapsed.TotalSeconds:F1} с");
         }
@@ -47,7 +58,10 @@ internal static class Shot
         // С ней дирижёр сцену не фиксирует: смены по фразам должны идти, как под настоящую музыку.
         float fakeBpm = float.TryParse(Environment.GetEnvironmentVariable("PHOSPHOR_FAKE_BPM"), System.Globalization.CultureInfo.InvariantCulture, out var b) ? b : 0;
         var director = new Director(shared, new List<MonitorSlot> { slot }, lockScene: fakeBpm <= 0, lockPreset: true);
+        // Время дирижёра (ночь/день) фиксировано; env PHOSPHOR_SHOT_TIME=HH:mm — снять днём/в другое время.
         var clock = new DateTime(2026, 10, 9, 4, 20, 0);
+        if (TimeOnly.TryParse(Environment.GetEnvironmentVariable("PHOSPHOR_SHOT_TIME"), System.Globalization.CultureInfo.InvariantCulture, out var shotTime))
+            clock = DateOnly.FromDateTime(clock).ToDateTime(shotTime);
 
         const float dt = 1f / 60f;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -64,6 +78,12 @@ internal static class Shot
                 lastBeat = beatNo;
             }
             director.Update(dt, f, audio);
+            // Самочувствие для ключа "phosphor": каждые 30 кадров (500 мс симулированного времени при dt = 1/60)
+            if (phSnap is null || f % 30 == 0)
+            {
+                phSnap = director.Report(shared.Fps, audio.Active ? audio.Bpm : 0, TimeSpan.FromSeconds(f * dt), f, clock);
+                phVer++;
+            }
             slot.Tick(dt, f * dt, f, audio, director.OrganismFor(0, clock), 1);
         }
         gl.Finish();

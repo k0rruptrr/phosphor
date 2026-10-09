@@ -2,5 +2,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Phosphor.Core\Phosphor.Core.csproj" />
     <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="8.0.0" />
   </ItemGroup>
 </Project>

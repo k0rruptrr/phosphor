@@ -10,6 +10,16 @@ internal static class DataWiring
     {
         var net = config.Network;
         var sources = new List<IDataSource>();
+        DataHub? hub = null;
+        // Точка для спутника: координаты из конфига, иначе город из погоды хаба (уже геокодирован).
+        Func<(double Lat, double Lon, string Name)?> where = () =>
+        {
+            if (net.Lat is double la && net.Lon is double lo) return (la, lo, net.City.ToUpperInvariant());
+            if (hub is not null && hub.TryGet("weather", out var snap, out _)
+                && snap is WeatherSnapshot w && double.IsFinite(w.Lat) && double.IsFinite(w.Lon))
+                return (w.Lat, w.Lon, w.City.ToUpperInvariant());
+            return null;
+        };
 
         foreach (var id in net.News)
         {
@@ -22,8 +32,13 @@ internal static class DataWiring
             if (TeletextSource.Create(ch) is { } s) sources.Add(s);
             else log.Warn($"data: неизвестный канал телетекста '{ch}' (есть: nos, svt)");
         }
+        foreach (var id in net.Satellite)
+        {
+            if (SatelliteSource.Create(id, where) is { } s) sources.Add(s);
+            else log.Warn($"data: неизвестный источник спутника '{id}'. Есть: {string.Join(", ", SatelliteSource.Ids)}");
+        }
 
-        var hub = new DataHub(sources, online, m => log.Info(m), (k, ps) => Merge(k, ps, net));
+        hub = new DataHub(sources, online, m => log.Info(m), (k, ps) => Merge(k, ps, net));
         hub.Start();
         log.Info($"data: {(online ? "онлайн" : "только кеш")}, источники: {string.Join(", ", sources.Select(s => s.Name))}");
         return hub;
@@ -33,6 +48,7 @@ internal static class DataWiring
     {
         "news" => NewsCatalog.Merge(perSource, net.CalmNews, net.CalmExtraWords),
         "teletext" => TeletextCatalog.Merge(perSource),
+        "satellite" => SatelliteCatalog.Merge(perSource),
         _ => perSource.MaxBy(s => s.FetchedAt),
     };
 }

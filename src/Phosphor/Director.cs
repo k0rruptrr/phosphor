@@ -65,11 +65,31 @@ internal sealed class Director
     }
 
     /// <summary>Самочувствие экрана для слота i.</summary>
-    public Organism OrganismFor(int i, DateTime now)
+    public Organism OrganismFor(int i, DateTime now) =>
+        new(BreathAt(_time), NightFactor(now), FatigueOf(_slots[i]), _slots[i].TransitionPulse);
+
+    private static float BreathAt(float time) => 0.5f + 0.5f * MathF.Sin(time * MathF.Tau / 90f);
+
+    private float FatigueOf(MonitorSlot slot) =>
+        Math.Clamp(slot.Current.Age / Math.Max(5f, _s.Config.Shuffle.IntervalSec), 0f, 1f);
+
+    /// <summary>
+    /// Отчёт о самочувствии для ключа "phosphor". Только чтение состояния: поведение дирижёра не меняется.
+    /// Fatigue — максимум по мониторам; Night — true, когда NightFactor ≥ 0.5.
+    /// </summary>
+    public PhosphorSnapshot Report(float fps, float bpm, TimeSpan uptime, long frames, DateTime now)
     {
-        float breath = 0.5f + 0.5f * MathF.Sin(_time * MathF.Tau / 90f);
-        float fatigue = Math.Clamp(_slots[i].Current.Age / Math.Max(5f, _s.Config.Shuffle.IntervalSec), 0f, 1f);
-        return new Organism(breath, NightFactor(now), fatigue, _slots[i].TransitionPulse);
+        var scenes = new List<string>(_slots.Count);
+        var presets = new List<string>(_slots.Count);
+        float fatigue = 0f;
+        foreach (var slot in _slots)
+        {
+            scenes.Add(slot.Current.Scene.Id);
+            presets.Add(slot.Current.PresetName);
+            fatigue = MathF.Max(fatigue, FatigueOf(slot));
+        }
+        return new PhosphorSnapshot(fps, scenes, presets, bpm, fatigue, BreathAt(_time), NightFactor(now) >= 0.5f,
+            uptime, frames, DateTimeOffset.Now);
     }
 
     /// <summary>1 с 01:00 до 05:00, плавно нарастает с 22:00 и спадает к 07:00, днём 0.</summary>

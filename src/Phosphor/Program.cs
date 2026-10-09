@@ -74,6 +74,13 @@ internal static class Program
         using var presenter = new Presenter(gl);
         // Превью — без сети: только кеш (окошко в панели управления не должно ходить в интернет).
         using var data = DataWiring.CreateHub(config, online: config.Network.Enabled && args.Mode != LaunchMode.Preview, log);
+        // Датчики ПК — не в превью (маленькое окно): там ключ "system" просто пуст
+        using var probe = args.Mode == LaunchMode.Preview ? null : new SystemProbe(m => log.Warn(m)).Start();
+        PhosphorSnapshot? phSnap = null;
+        long phVer = 0;
+        double phAt = 0;
+        data.RegisterLive("system", () => probe?.TryGetLive());
+        data.RegisterLive("phosphor", () => phSnap is null ? null : (phSnap, phVer));
         var overlays = Catalog.Overlays();
         log.Info($"оверлеи: {(overlays.Count == 0 ? "нет" : string.Join(", ", overlays.Keys))}");
         using var shared = new Shared(gl, config, Catalog.Scenes(), Catalog.Filters(), overlays, data, new Random(args.Seed ^ Environment.TickCount), log) { GridPasses = Catalog.GridPasses() };
@@ -118,6 +125,13 @@ internal static class Program
             }
             director.Update(dt, frame, af);
             var wall = DateTime.Now;
+            // Самочувствие заставки для ключа "phosphor": раз в 500 мс, в главном потоке (дёшево)
+            if (phSnap is null || now - phAt >= 0.5)
+            {
+                phSnap = director.Report(shared.Fps, af.Active ? af.Bpm : 0, TimeSpan.FromSeconds(now), frame, wall);
+                phVer++;
+                phAt = now;
+            }
             for (int i = 0; i < slots.Count; i++)
                 slots[i].Tick(dt, (float)now, frame, af, director.OrganismFor(i, wall), slots.Count);
 

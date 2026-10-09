@@ -79,7 +79,7 @@ public sealed class PhosphorConfig
       "scenes": {
         "enabled": ["matrix", "starfield", "pipes", "doomfire", "life", "dvd", "aquarium",
                     "teletext", "teletype", "weatherboard", "torus", "grayscott", "voxel", "boids",
-                    "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot"],
+                    "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism"],
         "speed": 1.0,
         "palette": "default",
         "params": {
