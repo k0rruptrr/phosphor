@@ -1,8 +1,9 @@
 # publish.ps1 - build PHOSPHOR into dist\Phosphor (Phosphor.exe + Phosphor.scr).
-# Usage: powershell -ExecutionPolicy Bypass -File scripts\publish.ps1 [-SelfContained]
+# Usage: powershell -ExecutionPolicy Bypass -File scriptspublish.ps1 [-FrameworkDependent]
+# Default is self-contained (.NET bundled, ~70 MB): the .scr runs on any PC.
 [CmdletBinding()]
 param(
-    [switch]$SelfContained
+    [switch]$FrameworkDependent
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,7 +15,7 @@ $cfgSrc  = Join-Path $root 'phosphor.json'
 $exe     = Join-Path $outDir 'Phosphor.exe'
 $scr     = Join-Path $outDir 'Phosphor.scr'
 $shotPng = Join-Path $root 'dist\check.png'
-$selfVal = if ($SelfContained) { 'true' } else { 'false' }
+$selfVal = if ($FrameworkDependent) { 'false' } else { 'true' }
 
 Write-Host "Project : $proj"
 Write-Host "Output  : $outDir"
