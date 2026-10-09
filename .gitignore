@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+dist/
+.build/
+.vs/
+
+# Local settings and logs
+*.user
+*.suo
+*.log
+.claude/settings.local.json
+
+# Archives
+*.rar
+*.zip

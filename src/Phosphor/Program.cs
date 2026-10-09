@@ -1,0 +1,194 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Phosphor.Core;
+using Phosphor.Gfx;
+using Phosphor.Platform;
+using Phosphor.Text;
+using Silk.NET.OpenGL;
+
+namespace Phosphor.App;
+
+internal static class Program
+{
+    private const float MaxDt = 0.1f;
+
+    [STAThread]
+    private static int Main(string[] argv)
+    {
+        using var log = new Log();
+        LaunchArgs args;
+        try { args = LaunchArgs.Parse(argv); }
+        catch (ArgumentException e)
+        {
+            log.Error(e.Message);
+            MessageBoxW(0, e.Message, "PHOSPHOR", 0x10);
+            return 2;
+        }
+        log.Info($"PHOSPHOR {args.Mode} argv=[{string.Join(' ', argv)}]");
+
+        try
+        {
+            Dpi.EnsurePerMonitorAware();
+            var warnings = new List<string>();
+            var cfgPath = Path.Combine(AppContext.BaseDirectory, "phosphor.json");
+            var config = PhosphorConfig.Load(cfgPath, warnings);
+            foreach (var w in warnings) log.Warn(w);
+
+            return args.Mode switch
+            {
+                LaunchMode.Configure => Configure(cfgPath),
+                LaunchMode.Shot => Shot.Run(args, config, log),
+                _ => RunInteractive(args, config, log),
+            };
+        }
+        catch (Exception e)
+        {
+            log.Error(e.ToString());
+            // Окно с ошибкой — только в интерактивной разработке. --shot работает без людей (скрипты, CI): только лог и код выхода.
+            if (args.Mode is LaunchMode.Windowed)
+                MessageBoxW(0, e.Message + "\n\nЛог: " + log.Path, "PHOSPHOR упал", 0x10);
+            return 1;
+        }
+    }
+
+    private static int Configure(string cfgPath)
+    {
+        if (!File.Exists(cfgPath)) File.WriteAllText(cfgPath, PhosphorConfig.DefaultJson);
+        int r = MessageBoxW(0, $"Окно настроек будет во второй версии.\nПока всё настраивается в файле:\n{cfgPath}\n\nОткрыть его?", "PHOSPHOR", 0x24);
+        if (r == 6) Process.Start(new ProcessStartInfo(cfgPath) { UseShellExecute = true });
+        return 0;
+    }
+
+    private static int RunInteractive(LaunchArgs args, PhosphorConfig config, Log log)
+    {
+        using var win = args.Mode switch
+        {
+            LaunchMode.Screensaver => ScreensaverWindow.CreateFullscreen(config.Exit.MouseThresholdPx),
+            LaunchMode.Preview => ScreensaverWindow.CreatePreview(args.ParentHwnd),
+            _ => ScreensaverWindow.CreateWindowed(args.Width, args.Height, "PHOSPHOR"),
+        };
+        var gl = win.Gl;
+        log.Info($"GL {gl.GetStringS(StringName.Version)} / {gl.GetStringS(StringName.Renderer)}; окно {win.ClientWidth}x{win.ClientHeight} @({win.OriginX},{win.OriginY})");
+
+        int cellH = args.Mode == LaunchMode.Preview ? Math.Max(8, win.ClientHeight / 14) : config.CellHeightPx;
+        using var presenter = new Presenter(gl);
+        // Превью — без сети: только кеш (окошко в панели управления не должно ходить в интернет).
+        using var data = DataWiring.CreateHub(config, online: config.Network.Enabled && args.Mode != LaunchMode.Preview, log);
+        var overlays = Catalog.Overlays();
+        log.Info($"оверлеи: {(overlays.Count == 0 ? "нет" : string.Join(", ", overlays.Keys))}");
+        using var shared = new Shared(gl, config, Catalog.Scenes(), Catalog.Filters(), overlays, data, new Random(args.Seed ^ Environment.TickCount), log) { GridPasses = Catalog.GridPasses() };
+
+        var slots = BuildSlots(win, args, shared, cellH);
+        // --scene / --preset в /w фиксируют сцену/пресет (разработка); в /s и /p дирижёр свободен.
+        var director = new Director(shared, slots, lockScene: args.Scene is not null, lockPreset: args.Preset is not null);
+        // Превью в панели управления — без звука: незачем держать захват ради окошка 150×110.
+        using var audio = config.Audio.Enabled && args.Mode != LaunchMode.Preview
+            ? Phosphor.Audio.AudioService.Start(config.Audio, m => log.Info("audio: " + m))
+            : null;
+        bool wasActive = false;
+        int beats = 0;
+        float lastBpm = 0;
+        var sw = Stopwatch.StartNew();
+        double last = 0, fpsT = 0; int fpsN = 0; long frame = 0;
+        int lastW = win.ClientWidth, lastH = win.ClientHeight;
+
+        while (true)
+        {
+            win.PumpEvents();
+            if (win.ShouldClose) break;
+
+            double now = sw.Elapsed.TotalSeconds;
+            float dt = (float)Math.Min(MaxDt, now - last);
+            last = now;
+
+            if (args.Mode == LaunchMode.Windowed && (win.ClientWidth != lastW || win.ClientHeight != lastH) && win.ClientWidth > 0 && win.ClientHeight > 0)
+            {
+                lastW = win.ClientWidth; lastH = win.ClientHeight;
+                slots[0].Resize(0, 0, lastW, lastH);
+            }
+            if (win.ClientWidth <= 0 || win.ClientHeight <= 0) { Thread.Sleep(16); continue; }
+
+            var af = audio?.Tick(dt) ?? AudioFrame.Silent;
+            if (af.Beat) beats++;
+            if (af.Bpm > 0) lastBpm = af.Bpm;
+            if (af.Active != wasActive)
+            {
+                log.Info(af.Active ? "музыка: есть" : "музыка: тишина");
+                wasActive = af.Active;
+            }
+            director.Update(dt, frame, af);
+            var wall = DateTime.Now;
+            for (int i = 0; i < slots.Count; i++)
+                slots[i].Tick(dt, (float)now, frame, af, director.OrganismFor(i, wall), slots.Count);
+
+            gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            gl.Viewport(0, 0, (uint)win.ClientWidth, (uint)win.ClientHeight);
+            gl.ClearColor(0, 0, 0, 1);
+            gl.Clear(ClearBufferMask.ColorBufferBit);
+            foreach (var s in slots) presenter.Draw(s.Output, 0, s.VpX, s.VpY, s.VpW, s.VpH);
+            win.SwapBuffers();
+            frame++;
+
+            fpsN++;
+            if (now - fpsT >= 5)
+            {
+                shared.Fps = (float)(fpsN / (now - fpsT));
+                log.Info(audio is null
+                    ? $"fps {fpsN / (now - fpsT):F1}"
+                    : $"fps {fpsN / (now - fpsT):F1} · ударов {beats} за {now - fpsT:F0} с · bpm {lastBpm:F0}");
+                fpsT = now; fpsN = 0; beats = 0;
+            }
+        }
+
+        foreach (var s in slots) s.Dispose();
+        log.Info("выход");
+        return 0;
+    }
+
+    private static List<MonitorSlot> BuildSlots(ScreensaverWindow win, LaunchArgs args, Shared s, int cellH)
+    {
+        var enabled = s.Config.Scenes.Enabled.Where(id =>
+        {
+            if (s.Scenes.Has(id)) return true;
+            s.Log.Warn($"Сцена '{id}' в конфиге, но не реализована — пропускаю");
+            return false;
+        }).ToList();
+        if (enabled.Count == 0) enabled.Add(s.Scenes.Ids.First());
+
+        string PickScene(int i) => args.Scene ?? (s.Config.Shuffle.PerMonitor
+            ? enabled[(s.Rng.Next(enabled.Count) + i) % enabled.Count]
+            : enabled[0]);
+        string preset = args.Preset ?? s.Config.Filters.Active;
+        // Стартовый оверлей — по тем же правилам, что и дирижёр (env PHOSPHOR_OVERLAY — принудительно)
+        string? PickOverlay(string sceneId) =>
+            Environment.GetEnvironmentVariable("PHOSPHOR_OVERLAY") is { Length: > 0 } ov ? ov
+            : s.Config.Overlay.Enabled && s.Overlays.ContainsKey(s.Config.Overlay.Id)
+              && !(sceneId is "boids" or "voxel" or "teletext" or "teletype" or "weatherboard")
+              && s.Rng.NextDouble() < s.Config.Overlay.Probability ? s.Config.Overlay.Id : null;
+
+        var slots = new List<MonitorSlot>();
+        if (args.Mode == LaunchMode.Screensaver)
+        {
+            var mons = Monitors.Enumerate();
+            for (int i = 0; i < mons.Count; i++)
+            {
+                var m = mons[i];
+                int x = m.X - win.OriginX;
+                int top = m.Y - win.OriginY;
+                int y = win.ClientHeight - (top + m.Height);
+                s.Log.Info($"монитор {i} {m.Name} {m.Width}x{m.Height} @({m.X},{m.Y}) primary={m.Primary} → viewport ({x},{y})");
+                var sc = PickScene(i);
+                slots.Add(new MonitorSlot(s, i, x, y, m.Width, m.Height, sc, preset, cellH, PickOverlay(sc)));
+            }
+        }
+        else
+        {
+            var sc = PickScene(0);
+            slots.Add(new MonitorSlot(s, 0, 0, 0, win.ClientWidth, win.ClientHeight, sc, preset, cellH, PickOverlay(sc)));
+        }
+        return slots;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    internal static extern int MessageBoxW(nint hwnd, string text, string caption, uint type);
+}

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Phosphor.Gfx\Phosphor.Gfx.csproj" />
+    <PackageReference Include="StbTrueTypeSharp" Version="1.26.13" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Shaders\**\*.vert;Shaders\**\*.frag" LogicalName="Phosphor.Text.Shaders.%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

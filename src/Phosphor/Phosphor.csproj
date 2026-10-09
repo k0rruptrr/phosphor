@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>Phosphor</AssemblyName>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Phosphor.Core\Phosphor.Core.csproj" />
+    <ProjectReference Include="..\Phosphor.Scenes\Phosphor.Scenes.csproj" />
+    <ProjectReference Include="..\Phosphor.Gfx\Phosphor.Gfx.csproj" />
+    <ProjectReference Include="..\Phosphor.Text\Phosphor.Text.csproj" />
+    <ProjectReference Include="..\Phosphor.Filters\Phosphor.Filters.csproj" />
+    <ProjectReference Include="..\Phosphor.Platform\Phosphor.Platform.csproj" />
+    <ProjectReference Include="..\Phosphor.Audio\Phosphor.Audio.csproj" />
+    <ProjectReference Include="..\Phosphor.Data\Phosphor.Data.csproj" />
+    <ProjectReference Include="..\Phosphor.Overlays\Phosphor.Overlays.csproj" />
+    <PackageReference Include="StbImageWriteSharp" Version="1.16.7" />
+  </ItemGroup>
+  <!-- Изолированная сборка сцены/фильтра: источники данных исключены из Phosphor.Data — без проводки к ним. -->
+  <ItemGroup Condition="'$(OnlyData)' == '' and ('$(OnlyScene)' != '' or '$(OnlyFilter)' != '')">
+    <Compile Remove="DataWiring.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="!('$(OnlyData)' == '' and ('$(OnlyScene)' != '' or '$(OnlyFilter)' != ''))">
+    <Compile Remove="DataWiringIsolated.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\phosphor.json" Link="phosphor.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

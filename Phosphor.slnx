@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Phosphor.Audio/Phosphor.Audio.csproj" />
+    <Project Path="src/Phosphor.Core/Phosphor.Core.csproj" />
+    <Project Path="src/Phosphor.Data/Phosphor.Data.csproj" />
+    <Project Path="src/Phosphor.Filters/Phosphor.Filters.csproj" />
+    <Project Path="src/Phosphor.Gfx/Phosphor.Gfx.csproj" />
+    <Project Path="src/Phosphor.Overlays/Phosphor.Overlays.csproj" />
+    <Project Path="src/Phosphor.Platform/Phosphor.Platform.csproj" />
+    <Project Path="src/Phosphor.Scenes/Phosphor.Scenes.csproj" />
+    <Project Path="src/Phosphor.Text/Phosphor.Text.csproj" />
+    <Project Path="src/Phosphor/Phosphor.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Phosphor.Audio.Tests/Phosphor.Audio.Tests.csproj" />
+    <Project Path="tests/Phosphor.Data.Tests/Phosphor.Data.Tests.csproj" />
+    <Project Path="tests/Phosphor.Filters.Tests/Phosphor.Filters.Tests.csproj" />
+    <Project Path="tests/Phosphor.Overlays.Tests/Phosphor.Overlays.Tests.csproj" />
+    <Project Path="tests/Phosphor.Platform.Tests/Phosphor.Platform.Tests.csproj" />
+    <Project Path="tests/Phosphor.Scenes.Tests/Phosphor.Scenes.Tests.csproj" />
+    <Project Path="tests/Phosphor.Text.Tests/Phosphor.Text.Tests.csproj" />
+  </Folder>
+</Solution>

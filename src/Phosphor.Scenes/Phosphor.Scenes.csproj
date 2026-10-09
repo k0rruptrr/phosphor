@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Сцены — горячий код (симуляции на каждый кадр). Оптимизация JIT включена и в Debug:
+         отладочные символы остаются, а тесты производительности меряют реальную скорость, а не неоптимизированный IL. -->
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Phosphor.Core\Phosphor.Core.csproj" />
+  </ItemGroup>
+  <!-- Изоляция для параллельной работы: -p:OnlyScene=Starfield компилирует только общие файлы + StarfieldScene.cs.
+       Чужие недописанные сцены не ломают твою сборку. -->
+  <ItemGroup Condition="'$(OnlyScene)' != ''">
+    <_Keep Include="Palettes.cs;MatrixScene.cs;Common\**\*.cs;$(OnlyScene)Scene.cs" />
+    <Compile Remove="**\*.cs" />
+    <Compile Include="@(_Keep->Distinct())" />
+  </ItemGroup>
+</Project>

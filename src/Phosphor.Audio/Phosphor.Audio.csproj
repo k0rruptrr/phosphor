@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Phosphor.Core\Phosphor.Core.csproj" />
+    <!-- 2.2.1 — проверенная стабильная. НЕ обновлять до 22.0.0: странная публикация вне линейки версий. -->
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+  </ItemGroup>
+</Project>

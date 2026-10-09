@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Phosphor.Core\Phosphor.Core.csproj" />
+  </ItemGroup>
+  <!-- Изолированная сборка сцены/фильтра: оверлеи могут быть недописаны другими — без них. -->
+  <ItemGroup Condition="'$(OnlyOverlay)' == '' and ('$(OnlyScene)' != '' or '$(OnlyFilter)' != '')">
+    <Compile Remove="**\*.cs" />
+  </ItemGroup>
+</Project>

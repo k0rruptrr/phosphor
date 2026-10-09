@@ -1,0 +1,73 @@
+using System.Text.Json;
+
+namespace Phosphor.Core;
+
+/// <summary>Общие опции сцены из конфига.</summary>
+public sealed class SceneOptions
+{
+    /// <summary>Множитель скорости, 1 = нормально.</summary>
+    public float Speed { get; init; } = 1f;
+
+    /// <summary>Палитра: "default", "green", "amber", "mono", "rainbow". Неизвестное имя — как "default".</summary>
+    public string Palette { get; init; } = "default";
+
+    /// <summary>Собственные параметры сцены (объект scenes.params.&lt;id&gt;). Нет поля — значение по умолчанию.</summary>
+    public JsonElement Params { get; init; } = Empty;
+
+    public static readonly JsonElement Empty = JsonDocument.Parse("{}").RootElement;
+
+    public float GetFloat(string name, float def) =>
+        TryGet(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetSingle() : def;
+
+    public int GetInt(string name, int def) =>
+        TryGet(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i : def;
+
+    public bool GetBool(string name, bool def) =>
+        TryGet(name, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : def;
+
+    public string GetString(string name, string def) =>
+        TryGet(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : def;
+
+    private bool TryGet(string name, out JsonElement v)
+    {
+        v = default;
+        return Params.ValueKind == JsonValueKind.Object && Params.TryGetProperty(name, out v);
+    }
+}
+
+/// <summary>
+/// Сцена (режим). Знает ТОЛЬКО сетку символов: никаких окон, GPU, фильтров.
+/// Жизненный цикл: Init, затем (Update, Draw)*. Init может вызываться повторно — сцена полностью сбрасывается.
+/// </summary>
+public interface IScene
+{
+    /// <summary>Уникальный id в нижнем регистре, как в конфиге ("matrix", "doomfire", ...).</summary>
+    string Id { get; }
+
+    /// <summary>cols, rows ≥ 1. Вся случайность — только через rng (детерминизм для тестов).</summary>
+    void Init(int cols, int rows, Random rng, SceneOptions options);
+
+    /// <summary>dt — секунды с прошлого кадра, 0 ≤ dt ≤ 0.1 (хост обрезает). При dt=0 состояние не меняется.</summary>
+    void Update(float dt);
+
+    /// <summary>
+    /// Нарисовать кадр в grid (размер = cols x rows из Init). Перерисовать ВСЕ ячейки,
+    /// не полагаться на содержимое прошлого кадра. Draw не меняет состояние: два Draw подряд дают одно и то же.
+    /// </summary>
+    void Draw(CharGrid grid);
+}
+
+/// <summary>
+/// Необязательно. Сцене нужна крупнее/мельче сетка, чем по умолчанию (например, телетекст — 25 строк на весь экран).
+/// Хост подберёт высоту ячейки ≈ высота_экрана / PreferredRows (в пределах 8..64 px) и вызовет Init с полученной сеткой.
+/// </summary>
+public interface IPreferredRows
+{
+    int PreferredRows { get; }
+}
+
+/// <summary>Необязательно. Сцена с этим интерфейсом получает звук перед каждым Update.</summary>
+public interface IAudioReactive
+{
+    void OnAudio(in AudioFrame audio);
+}

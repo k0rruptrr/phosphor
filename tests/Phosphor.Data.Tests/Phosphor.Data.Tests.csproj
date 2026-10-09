@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Phosphor.Data\Phosphor.Data.csproj" />
+  </ItemGroup>
+  <!-- Реальные ответы серверов, сохранённые один раз: тесты разбора работают без сети. -->
+  <ItemGroup>
+    <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <!-- -p:OnlyData=Tass: только общие + TassSourceTests.cs -->
+  <ItemGroup Condition="'$(OnlyData)' != ''">
+    <_Keep Include="Common\**\*.cs;$(OnlyData)SourceTests.cs" />
+    <Compile Remove="**\*.cs" />
+    <Compile Include="@(_Keep->Distinct())" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

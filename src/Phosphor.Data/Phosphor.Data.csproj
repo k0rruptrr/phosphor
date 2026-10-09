@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Phosphor.Core\Phosphor.Core.csproj" />
+    <!-- Только для разбора крошечных GIF мозаики SVT Text (Windows-only, как и весь проект). -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
+  </ItemGroup>
+  <!-- Изоляция: -p:OnlyData=News компилирует только общие файлы + Sources\NewsSource.cs -->
+  <ItemGroup Condition="'$(OnlyData)' != ''">
+    <_Keep Include="IDataSource.cs;DataHub.cs;Common\**\*.cs;Sources\$(OnlyData)Source.cs" />
+    <Compile Remove="**\*.cs" />
+    <Compile Include="@(_Keep->Distinct())" />
+  </ItemGroup>
+  <!-- Изолированная сборка сцены/фильтра: источники данных не нужны и могут быть недописаны другими — без них. -->
+  <ItemGroup Condition="'$(OnlyData)' == '' and ('$(OnlyScene)' != '' or '$(OnlyFilter)' != '')">
+    <Compile Remove="Sources\**\*.cs" />
+  </ItemGroup>
+</Project>

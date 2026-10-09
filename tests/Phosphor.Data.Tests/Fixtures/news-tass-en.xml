@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:atom="https://www.w3.org/2005/Atom"><channel><title>TASS</title>
+<description>TASS News Agency</description>
+<language>en</language>
+<link><![CDATA[https://tass.com]]></link>
+<copyright>TASS</copyright>
+<image><url><![CDATA[https://tass.com/i/rss/en/logo.png]]></url>
+<title>TASS</title>
+<link><![CDATA[https://tass.com]]></link>
+</image>
+<atom:link href="https://tass.com/rss/v2.xml" rel="self" type="application/rss+xml"></atom:link>
+<item><title>Two drones attack Iranian opposition sites in Iraqi Kurdistan — TV</title><link><![CDATA[https://tass.com/world/2199617]]></link><pubDate>Fri, 09 Oct 2026 03:43:26 +0300</pubDate><description></description></item>
+<item><title>Pezeshkian thanks Putin for Russia’s stance on Middle East conflict</title><link><![CDATA[https://tass.com/world/2199615]]></link><pubDate>Fri, 09 Oct 2026 03:35:01 +0300</pubDate><description></description></item>
+<item><title>Putin, Pezeshkian decided to meet earlier, because scheduling permitted — spokesman</title><link><![CDATA[https://tass.com/politics/2199613]]></link><pubDate>Fri, 09 Oct 2026 03:05:01 +0300</pubDate><description></description></item>
+<item><title>Skill of diplomats is to identify openings to peace in Ukraine — Kremlin spokesman</title><link><![CDATA[https://tass.com/politics/2199611]]></link><pubDate>Fri, 09 Oct 2026 02:47:00 +0300</pubDate><description></description></item>
+<item><title>Russia, US in talks on mutually beneficial economic projects — Kremlin spokesman</title><link><![CDATA[https://tass.com/economy/2199609]]></link><pubDate>Fri, 09 Oct 2026 02:35:01 +0300</pubDate><description></description></item>
+</channel></rss>

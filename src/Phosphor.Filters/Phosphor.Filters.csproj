@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Шаги сетки (mono) — горячий CPU-код на каждый кадр; оптимизация и в Debug, как у Scenes. -->
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Phosphor.Gfx\Phosphor.Gfx.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Shaders\**\*.frag" LogicalName="Phosphor.Filters.Shaders.%(Filename)%(Extension)" />
+  </ItemGroup>
+  <!-- Изоляция: -p:OnlyFilter=Vhs компилирует только CrtFilter.cs + VhsFilter.cs. -->
+  <ItemGroup Condition="'$(OnlyFilter)' != ''">
+    <_Keep Include="CrtFilter.cs;Common\**\*.cs;$(OnlyFilter)Filter.cs" />
+    <Compile Remove="**\*.cs" />
+    <Compile Include="@(_Keep->Distinct())" />
+  </ItemGroup>
+</Project>

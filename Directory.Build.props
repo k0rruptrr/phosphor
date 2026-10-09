@@ -1,0 +1,19 @@
+<Project>
+  <!-- Общие настройки для всех проектов PHOSPHOR -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>12</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Обычная сборка (без AgentId, например dotnet publish) кладёт obj/bin внутрь проекта; сборки с AgentId
+         не должны затягивать оттуда сгенерированные AssemblyInfo.cs как исходники. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
+  </PropertyGroup>
+  <!-- Параллельные агенты: dotnet build -p:AgentId=X собирает в свои bin/obj и не мешает остальным -->
+  <PropertyGroup Condition="'$(AgentId)' != ''">
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory).build\$(AgentId)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory).build\$(AgentId)\bin\$(MSBuildProjectName)\</BaseOutputPath>
+  </PropertyGroup>
+</Project>
