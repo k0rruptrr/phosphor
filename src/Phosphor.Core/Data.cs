@@ -61,9 +61,49 @@ public sealed record TeletextSnapshot(IReadOnlyList<TeletextPage> Pages, DateTim
 public sealed record TeletextPage(string Channel, string Lang, int Page, int SubPage, int Rows, int Cols,
     char[] Chars, byte[] Fg, byte[] Bg, byte[] Mosaic);
 
-/// <summary>"satellite" — кадр спутника, уже уменьшенный до разумного размера (RGB, построчно сверху вниз).</summary>
-public sealed record SatelliteSnapshot(string Source, DateTimeOffset TakenAt, int Width, int Height, byte[] Rgb,
+/// <summary>
+/// "satellite" — одна спутниковая лента (источник = лента). Несколько лент одного ключа хост сливает в
+/// SatelliteSetSnapshot (см. SatelliteCatalog.Merge в Phosphor.Data); сцена получает именно его.
+/// Frames — кольцо последних кадров, старые первыми (для таймлапса); у суточных лент — 1–2 кадра.
+/// </summary>
+/// <param name="Id">"meteosat" | "himawari" | "viirs".</param>
+/// <param name="Label">Подпись для HUD капсом: "METEOSAT-12 · FCI · GEOCOLOUR".</param>
+/// <param name="Area">Где кадр на Земле.</param>
+public sealed record SatelliteFeed(string Id, string Label, SatelliteArea Area, IReadOnlyList<SatelliteFrame> Frames,
     DateTimeOffset FetchedAt, bool FromCache) : DataSnapshot(FetchedAt, FromCache);
+
+/// <summary>"satellite" после слияния — все доступные ленты (пустых лент в списке нет).</summary>
+public sealed record SatelliteSetSnapshot(IReadOnlyList<SatelliteFeed> Feeds, DateTimeOffset FetchedAt, bool FromCache)
+    : DataSnapshot(FetchedAt, FromCache);
+
+/// <summary>Кадр: RGB построчно сверху вниз, Width × Height × 3 байта, уже уменьшен (≤ 480 по большей стороне).</summary>
+public sealed record SatelliteFrame(DateTimeOffset TakenAt, int Width, int Height, byte[] Rgb);
+
+/// <summary>
+/// Геопривязка кадра.
+/// Equirect: пиксель (x, y) ↔ lon = West + (x+0.5)/W·(East−West), lat = North − (y+0.5)/H·(North−South).
+/// FullDisk: вид геостационара на весь диск с точки над (0°, SubLon); диск вписан в кадр, радиус = Width/2·DiskScale.
+/// MarkLat/MarkLon — точка интереса (город из конфига), NaN — нет; MarkName — подпись капсом.
+/// </summary>
+public sealed record SatelliteArea(SatelliteProjection Projection, double West, double South, double East, double North,
+    double SubLon, double DiskScale, double MarkLat, double MarkLon, string? MarkName);
+
+public enum SatelliteProjection { Equirect, FullDisk }
+
+/// <summary>"system" — состояние ПК, обновляется хостом ~2 раза в секунду (не сеть, не кеш).</summary>
+/// <param name="CorePct">Загрузка каждого логического ядра 0..100.</param>
+/// <param name="GpuPct">Загрузка GPU 0..100, NaN — неизвестно.</param>
+/// <param name="NetDownBps">Байт/с по всем интерфейсам; диск — тоже байт/с.</param>
+public sealed record SystemSnapshot(string Host, string Os, TimeSpan Uptime, float CpuPct, float[] CorePct,
+    double RamUsedGb, double RamTotalGb, float GpuPct, string? GpuName, double NetDownBps, double NetUpBps,
+    double DiskReadBps, double DiskWriteBps, int Processes, DateTimeOffset At) : DataSnapshot(At, false);
+
+/// <summary>"phosphor" — самочувствие самой заставки, ~2 раза в секунду.</summary>
+/// <param name="Scenes">Текущая сцена на каждом мониторе (по порядку мониторов); Presets — пресет фильтров там же.</param>
+/// <param name="Bpm">Темп музыки, 0 — музыки нет.</param>
+/// <param name="Fatigue">Усталость дирижёра 0..1; Breath — фаза дыхания 0..1; Night — ночной режим.</param>
+public sealed record PhosphorSnapshot(float Fps, IReadOnlyList<string> Scenes, IReadOnlyList<string> Presets, float Bpm,
+    float Fatigue, float Breath, bool Night, TimeSpan Uptime, long Frames, DateTimeOffset At) : DataSnapshot(At, false);
 
 /// <summary>Классическая палитра телетекста (индекс → цвет).</summary>
 public static class TeletextColors

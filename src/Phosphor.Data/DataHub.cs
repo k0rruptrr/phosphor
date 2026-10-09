@@ -78,6 +78,14 @@ public sealed class DataHub : IDisposable
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("PHOSPHOR-screensaver/0.1 (ascii screensaver; personal use)");
     }
 
+    private readonly ConcurrentDictionary<string, Func<(DataSnapshot Snap, long Version)?>> _live = new();
+
+    /// <summary>
+    /// Живой ключ без сети и кеша ("system", "phosphor"): хост сам держит свежий снимок, хаб просто отдаёт его сценам.
+    /// provider вызывается из главного потока на каждом TryGet — должен быть дешёвым (вернуть готовое); Version растёт при обновлении.
+    /// </summary>
+    public void RegisterLive(string key, Func<(DataSnapshot Snap, long Version)?> provider) => _live[key] = provider;
+
     /// <summary>Загрузить кеш и (если онлайн) запустить фоновый опрос.</summary>
     public void Start()
     {
@@ -105,6 +113,7 @@ public sealed class DataHub : IDisposable
             return true;
         }
         if (_latest.TryGetValue(key, out var v)) { snapshot = v.Snap; version = v.Version; return true; }
+        if (_live.TryGetValue(key, out var live) && live() is { } ls) { snapshot = ls.Snap; version = ls.Version; return true; }
         snapshot = null!; version = 0;
         return false;
     }
