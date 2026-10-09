@@ -7,7 +7,7 @@ namespace Phosphor.Filters.Tests;
 
 public class MonoPassTests
 {
-    private const string DefaultRamp = " .:-=+*#%@";
+    private const string DefaultRamp = " ░▒▓█";
 
     /// <summary>Фейковое покрытие: символы рампы — по порядку (0..1), '█' = 1, прочие — 0.5. Настоящее — в Phosphor.Text (GlyphAtlas).</summary>
     private sealed class FakeCoverage : IGlyphCoverage
@@ -77,13 +77,28 @@ public class MonoPassTests
     }
 
     [Fact]
-    public void Gradient_HasAtLeastSixDistinctSymbols()
+    public void Gradient_UsesEveryRampStep()
     {
-        var pass = Make("{\"dither\":false}");
+        // Градиент 0..1 без дизеринга использует все ступени рампы по умолчанию: множество символов == рампа.
+        AssertGradientUsesRamp(DefaultRamp, "{\"dither\":false}");
+    }
+
+    [Fact]
+    public void Gradient_UsesEveryStepOfCustomLongRamp()
+    {
+        // Параметр ramp на длинной рампе из 10 символов по-прежнему работает: градиент использует все ступени.
+        const string longRamp = " .:-=+*#%@";
+        AssertGradientUsesRamp(longRamp, $"{{\"ramp\":\"{longRamp}\",\"dither\":false}}");
+    }
+
+    private static void AssertGradientUsesRamp(string ramp, string json)
+    {
+        var pass = Make(json);
         var g = Gradient(64, 16);
         pass.Apply(g, Cov);
-        var distinct = g.Cells.Select(c => c.Ch).Distinct().Count();
-        Assert.True(distinct >= 6, $"различных символов {distinct}");
+        var used = g.Cells.Select(c => c.Ch).Distinct().OrderBy(c => c);
+        var expected = ramp.Distinct().OrderBy(c => c);
+        Assert.Equal(new string(expected.ToArray()), new string(used.ToArray()));
     }
 
     [Fact]
@@ -120,25 +135,81 @@ public class MonoPassTests
     }
 
     [Fact]
-    public void UpperHalfWhiteOverBlack_UsesFormSymbol()
+    public void UpperHalfWhiteOverBlack_StaysUpperHalfBlock()
     {
         var g = new CharGrid(1, 1);
         g.Put(0, 0, '▀', Rgba.White, Rgba.Black);
 
         Make().Apply(g, Cov);
 
-        Assert.Contains(g[0, 0].Ch, "'`^\"");
+        Assert.Equal('▀', g[0, 0].Ch);
+        Assert.Equal(Rgba.White, g[0, 0].Fg);
+        Assert.Equal(Rgba.Black, g[0, 0].Bg);
     }
 
     [Fact]
-    public void LowerHalfWhiteOverBlack_UsesLowerFormSymbol()
+    public void LowerHalfWhiteOverBlack_BecomesLowerHalfBlock()
     {
+        // Верх чёрный, низ белый: светлая половина внизу — '▄', Fg белый (светлая половина), Bg чёрный.
         var g = new CharGrid(1, 1);
         g.Put(0, 0, '▀', Rgba.Black, Rgba.White);
 
         Make().Apply(g, Cov);
 
-        Assert.Contains(g[0, 0].Ch, "._,");
+        Assert.Equal('▄', g[0, 0].Ch);
+        Assert.Equal(Rgba.White, g[0, 0].Fg);
+        Assert.Equal(Rgba.Black, g[0, 0].Bg);
+    }
+
+    [Fact]
+    public void HalfBlock_WithSimilarHalves_UsesShadingStep()
+    {
+        var g = new CharGrid(1, 1);
+        g.Put(0, 0, '▀', new Rgba(128, 128, 128), new Rgba(128, 128, 128));
+
+        Make("{\"dither\":false}").Apply(g, Cov);
+
+        Assert.Contains(g[0, 0].Ch, DefaultRamp);
+        Assert.NotEqual('▀', g[0, 0].Ch);
+    }
+
+    [Fact]
+    public void Sextant_KeepsBitsAndGetsGrayColors()
+    {
+        char sextant = GlyphSet.Sextant(0b101010);
+        var g = new CharGrid(1, 1);
+        g.Put(0, 0, sextant, new Rgba(0, 255, 0), new Rgba(0, 0, 255));
+
+        Make().Apply(g, Cov);
+
+        Assert.Equal(sextant, g[0, 0].Ch);
+        var fg = g[0, 0].Fg;
+        var bg = g[0, 0].Bg;
+        Assert.True(fg.R == fg.G && fg.G == fg.B, $"Fg секстеля не серый: {fg}");
+        Assert.True(bg.R == bg.G && bg.G == bg.B, $"Bg секстеля не серый: {bg}");
+    }
+
+    [Fact]
+    public void ShadingRamp_IsMonotoneInBrightness()
+    {
+        // Ступени штриховки идут слева направо по возрастанию яркости: индекс в рампе не убывает.
+        var pass = Make("{\"dither\":false}");
+        var g = Gradient(64, 16);
+        pass.Apply(g, Cov);
+
+        foreach (var c in g.Cells)
+            Assert.Contains(c.Ch, DefaultRamp);
+
+        for (int y = 0; y < g.Rows; y++)
+        {
+            int prev = -1;
+            for (int x = 0; x < g.Cols; x++)
+            {
+                int idx = DefaultRamp.IndexOf(g[x, y].Ch);
+                Assert.True(idx >= prev, $"({x},{y}) ступень {idx} меньше предыдущей {prev}");
+                prev = idx;
+            }
+        }
     }
 
     [Fact]

@@ -13,7 +13,8 @@ public sealed class WeatherBoardSceneTests
 
     private static readonly Rgba Cold = Rgba.Hex(0xA8D8FF);
     private static readonly ClockSnapshot Clock = new(new DateTime(2026, 10, 9, 4, 20, 0));
-    private static readonly Regex DayRow = new(@"(ПН|ВТ|СР|ЧТ|ПТ|СБ|ВС) \d\d", RegexOptions.Compiled);
+    // Строка дня: «ПТ 09» без точки за числом (в шапке стоит дата «ПТ 09.10»).
+    private static readonly Regex DayRow = new(@"(ПН|ВТ|СР|ЧТ|ПТ|СБ|ВС) \d\d(?![\d.])", RegexOptions.Compiled);
 
     [Fact]
     public void Contract() => SceneContract.VerifyAll(() => new WeatherBoardScene(), "weatherboard");
@@ -102,6 +103,104 @@ public sealed class WeatherBoardSceneTests
         SceneContract.Run(s, 300);
         var g = SceneContract.Snap(s, 120, 36);
         _out.WriteLine(SceneContract.Dump(g, "weatherboard-layout"));
+    }
+
+    [Fact]
+    public void NoData_ShowsWaitingInTicker()
+    {
+        var s = Make(45);
+        ((IDataScene)s).OnData("clock", Clock);
+
+        string text = Over10s(s);
+        Assert.Contains("ОЖИДАНИЕ ДАННЫХ", text);
+        Assert.DoesNotContain("НЕТ СВЯЗИ", text);
+    }
+
+    [Fact]
+    public void StatusError_ShowsNoLinkAndReason()
+    {
+        var s = Make(46);
+        var d = (IDataScene)s;
+        d.OnData("clock", Clock);
+        d.OnData("weather.status", new SourceStatusSnapshot("BLOCKED", "WSAEACCES 10013",
+            new DateTimeOffset(new DateTime(2026, 10, 9, 4, 18, 0, DateTimeKind.Local))));
+
+        string text = Over10s(s);
+        Assert.Contains("НЕТ СВЯЗИ · OPEN-METEO", text);
+        Assert.Contains("СЕТЬ ЗАБЛОКИРОВАНА (FIREWALL?)", text);
+        Assert.DoesNotContain("ОЖИДАНИЕ ДАННЫХ", text);
+    }
+
+    [Fact]
+    public void StaleCache_HidesPastDays_AndShowsAge()
+    {
+        var s = Make(47);
+        var d = (IDataScene)s;
+        d.OnData("clock", Clock);
+        d.OnData("weather", Stale());
+        SceneContract.Run(s, 300);
+
+        var g = SceneContract.Snap(s, 120, 36);
+        string table = Text(g, 0, 36);
+        Assert.DoesNotContain("ЧТ 08", table);   // вчерашний день из старого кеша не показываем
+        Assert.Contains("ПТ 09", table);
+        _out.WriteLine(SceneContract.Dump(g, "weatherboard-stale"));
+        int dayRows = table.Split('\n').Count(l => DayRow.IsMatch(l));
+        Assert.Equal(6, dayRows);                // 09..14, хвост таблицы пустой
+
+        Assert.Contains("КЕШ · 5 МИН НАЗАД", Over10s(s));
+    }
+
+    [Fact]
+    public void DuringWave_NoPlateShowsSpaceForNonSpaceTarget()
+    {
+        var s = Make(48);
+        Feed(s, Moscow(7.4));
+        SceneContract.Run(s, 300);
+        var settled = SceneContract.Snap(s, 120, 36);
+        const int tickerY = 36 - 1 - 2;   // строка тикера бежит — её не сравниваем
+
+        int violations = 0, changed = 0;
+        for (int f = 0; f < 6000; f++)    // 100 с: первая волна приходит в 45–90 с
+        {
+            s.Update(SceneContract.Dt);
+            var g = SceneContract.Snap(s, 120, 36);
+            for (int y = 0; y < 36; y++)
+            {
+                if (y == tickerY) continue;
+                for (int x = 0; x < 120; x++)
+                {
+                    char target = settled[x, y].Ch;
+                    if (g[x, y].Ch != target) changed++;
+                    if (target != ' ' && g[x, y].Ch == ' ') violations++;
+                }
+            }
+        }
+
+        Assert.True(changed > 0, "волна не прошла — проверка пустая");
+        Assert.Equal(0, violations);
+    }
+
+    /// <summary>Текст табло за ~10 с: тикер бежит по кругу, поэтому склеиваем кадры.</summary>
+    private static string Over10s(IScene s)
+    {
+        var sb = new StringBuilder();
+        for (int i = 0; i < 40; i++)
+        {
+            SceneContract.Run(s, 15);
+            sb.Append(Text(SceneContract.Snap(s, 120, 36), 0, 36));
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Кеш вчерашнего дня: 7 дней, начиная с 08.10, снимок взят в 04:15 локального времени (за 5 минут до часов сцены).</summary>
+    private static WeatherSnapshot Stale()
+    {
+        var start = new DateOnly(2026, 10, 8);
+        var days = new List<WeatherDay>();
+        for (int i = 0; i < 7; i++) days.Add(new WeatherDay(start.AddDays(i), 3, 10, 0, 3));
+        return new WeatherSnapshot("Москва", 55.75, 37.62, new WeatherNow(7.4, 5.4, 45, 3), days,
+            new DateTimeOffset(new DateTime(2026, 10, 9, 4, 15, 0, DateTimeKind.Local)), FromCache: true);
     }
 
     private static IScene Make(int seed) =>

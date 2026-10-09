@@ -29,13 +29,24 @@ public sealed record NewsSnapshot(IReadOnlyList<NewsItem> Items, DateTimeOffset 
 /// <param name="Lang">ISO-код языка заголовка: "ru", "en", "de"...</param>
 public sealed record NewsItem(string Source, string Title, DateTimeOffset? Published, string Lang);
 
-/// <summary>"weather" — текущая погода и прогноз по дням.</summary>
+/// <summary>
+/// "weather" — текущая погода и прогноз по дням.
+/// Source — провайдер ("open-meteo" или "met.no"). Query — запрос города из конфига (нужен, чтобы координаты из кеша
+/// не подменяли другой город); null — кеш старого формата.
+/// Пропущенные значения источника — double.NaN, код погоды — -1: сцена рисует «--».
+/// </summary>
 public sealed record WeatherSnapshot(string City, double Lat, double Lon, WeatherNow Now, IReadOnlyList<WeatherDay> Days,
-    DateTimeOffset FetchedAt, bool FromCache) : DataSnapshot(FetchedAt, FromCache);
+    DateTimeOffset FetchedAt, bool FromCache, string Source = "open-meteo", string? Query = null) : DataSnapshot(FetchedAt, FromCache);
 
-/// <param name="Code">WMO weather code (как в Open-Meteo).</param>
+/// <param name="Code">WMO weather code (как в Open-Meteo); -1 — нет данных.</param>
 public sealed record WeatherNow(double TempC, double WindKmh, double WindDirDeg, int Code);
 public sealed record WeatherDay(DateOnly Date, double MinC, double MaxC, double PrecipMm, int Code);
+
+/// <summary>
+/// Статус источника ключа "&lt;key&gt;.status" (например "weather.status"). Не кешируется; хаб публикует его при каждой попытке.
+/// Kind = null — последняя попытка удалась. Иначе: BLOCKED (WSAEACCES, фаервол), TIMEOUT, DNS, HTTP, NET, NODATA, PARSE, OFF (сеть выключена в конфиге), ERROR.
+/// </summary>
+public sealed record SourceStatusSnapshot(string? Kind, string? Message, DateTimeOffset LastAttempt) : DataSnapshot(LastAttempt, false);
 
 /// <summary>"teletext" — набор страниц одного или нескольких каналов.</summary>
 public sealed record TeletextSnapshot(IReadOnlyList<TeletextPage> Pages, DateTimeOffset FetchedAt, bool FromCache)

@@ -1,13 +1,49 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Phosphor.Core;
 
 namespace Phosphor.Data;
+
+/// <summary>Источник, которому хаб отдаёт снимок из кеша до первого запроса (например, координаты погоды).</summary>
+public interface IRestorable
+{
+    void Restore(DataSnapshot cached);
+}
+
+/// <summary>Классификация ошибки загрузки для статуса "&lt;key&gt;.status" (см. SourceStatusSnapshot).</summary>
+public static class FetchErrors
+{
+    /// <summary>Вид ошибки и короткое пояснение. Вид — см. SourceStatusSnapshot.</summary>
+    public static (string Kind, string Message) Classify(Exception e)
+    {
+        for (Exception? x = e; x is not null; x = x.InnerException)
+        {
+            if (x is SocketException se)
+            {
+                if (se.SocketErrorCode == SocketError.AccessDenied) return ("BLOCKED", "WSAEACCES " + se.ErrorCode);
+                if (se.SocketErrorCode is SocketError.HostNotFound or SocketError.TryAgain) return ("DNS", se.Message);
+            }
+        }
+        for (Exception? x = e; x is not null; x = x.InnerException)
+        {
+            if (x is TimeoutException or TaskCanceledException) return ("TIMEOUT", e.Message);
+        }
+        if (e is HttpRequestException hre && hre.StatusCode is { } code) return ("HTTP", $"HTTP {(int)code}");
+        if (e is HttpRequestException) return ("NET", e.Message);
+        if (e is System.Text.Json.JsonException) return ("PARSE", e.Message);
+        if (e is InvalidOperationException) return ("NODATA", e.Message);
+        return ("ERROR", e.Message);
+    }
+}
 
 /// <summary>
 /// Фоновая доставка данных. Источники опрашиваются в своём потоке; последний снимок по каждому ключу
 /// лежит в памяти и в кеше на диске (%LOCALAPPDATA%\Phosphor\cache). Главный поток только читает Latest.
 /// Без сети (или Network.Enabled=false) — снимки из кеша с FromCache=true.
+/// Статус последней попытки каждого источника — снимок SourceStatusSnapshot под ключом "&lt;key&gt;.status".
 /// </summary>
 public sealed class DataHub : IDisposable
 {
@@ -34,7 +70,10 @@ public sealed class DataHub : IDisposable
         _online = online;
         _log = log;
         _merge = merge ?? ((_, list) => list.MaxBy(s => s.FetchedAt));
-        CacheDir = cacheDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Phosphor", "cache");
+        CacheDir = cacheDir
+            ?? (Environment.GetEnvironmentVariable("PHOSPHOR_CACHE_DIR") is { Length: > 0 } env
+                ? env
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Phosphor", "cache"));
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("PHOSPHOR-screensaver/0.1 (ascii screensaver; personal use)");
     }
@@ -44,8 +83,15 @@ public sealed class DataHub : IDisposable
     {
         foreach (var s in _sources) LoadCache(s);
         if (_online) _loop = Task.Run(() => LoopAsync(_cts.Token));
-        else _log("data: сеть выключена в конфиге, только кеш");
+        else
+        {
+            _log("data: сеть выключена в конфиге, только кеш");
+            foreach (var s in _sources) SetStatus(s, "OFF", "сеть выключена в конфиге");
+        }
     }
+
+    private void SetStatus(IDataSource s, string? kind, string? message) =>
+        _latest[s.Key + ".status"] = (new SourceStatusSnapshot(kind, message, DateTimeOffset.Now), Interlocked.Increment(ref _version));
 
     /// <summary>Последний снимок по ключу и его версия (растёт при каждом обновлении).</summary>
     public bool TryGet(string key, out DataSnapshot snapshot, out long version)
@@ -86,6 +132,7 @@ public sealed class DataHub : IDisposable
                         SaveCache(s, snap);
                     }
                     fails[s] = 0;
+                    SetStatus(s, null, null);
                     next[s] = DateTime.UtcNow + Interval(s);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
@@ -94,6 +141,8 @@ public sealed class DataHub : IDisposable
                     fails[s]++;
                     var delay = TimeSpan.FromSeconds(Math.Min(Interval(s).TotalSeconds, 30 * Math.Pow(2, fails[s] - 1)));
                     _log($"data: {s.Name} ошибка ({e.GetType().Name}: {e.Message}), повтор через {delay.TotalSeconds:F0} с");
+                    var (kind, message) = FetchErrors.Classify(e);
+                    SetStatus(s, kind, message);
                     next[s] = DateTime.UtcNow + delay;
                 }
             }
@@ -113,7 +162,12 @@ public sealed class DataHub : IDisposable
     }
 
     // Кеш — JSON со служебным полем типа. Битый кеш молча игнорируется.
-    private static readonly JsonSerializerOptions Json = new() { IncludeFields = true };
+    // NaN — пропущенное значение источника (см. WeatherSnapshot): в JSON пишем и читаем как "NaN".
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        IncludeFields = true,
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
+    };
 
     private string CachePath(IDataSource s) => Path.Combine(CacheDir, s.Name + ".json");
 
@@ -141,6 +195,7 @@ public sealed class DataHub : IDisposable
             if (type is null || !typeof(DataSnapshot).IsAssignableFrom(type)) return;
             if (JsonSerializer.Deserialize(text[(nl + 1)..], type, Json) is not DataSnapshot snap) return;
             Publish(s, snap with { FromCache = true });
+            if (s is IRestorable r) r.Restore(snap);
             _log($"data: {s.Name} из кеша от {snap.FetchedAt:dd.MM HH:mm}");
         }
         catch (Exception e) { _log($"data: кеш {s.Name} битый, пропускаю: {e.Message}"); }

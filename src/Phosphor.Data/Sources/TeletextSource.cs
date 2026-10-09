@@ -191,10 +191,10 @@ public sealed class TeletextSource : IDataSource
     /// Классы фона bgXX, символа XX. Коды: Bl=чёрный, R, G, Y, B, M, C, W (bl как символ — тоже чёрный).
     /// class DH — строка с двойной высотой: растягивается ×2 по вертикали на строки k и k+1
     /// (текст — символ в k, пробел в k+1; мозаика — через StretchSextant). Строка k+1 в HTML — пустой placeholder.
-    /// bgImg — мозаика: style=url(.../chars/&lt;id&gt;.gif) — одна ячейка, биты берутся у gifToBits(url);
+    /// bgImg — мозаика: style=url(.../chars/&lt;id&gt;.gif) — одна ячейка, биты берутся у gifToBits(url, фон ячейки);
     /// null (неизвестный GIF) — пустая ячейка с фоном.
     /// </summary>
-    public static TeletextPage ParseSvt(string json, int page, Func<string, int?> gifToBits)
+    public static TeletextPage ParseSvt(string json, int page, Func<string, byte, int?> gifToBits)
     {
         var html = SvtHtml(json);
         var grid = new Grid();
@@ -219,7 +219,7 @@ public sealed class TeletextSource : IDataSource
                 if (img && row >= 0 && row < Rows)
                 {
                     var url = UrlOf(t.Attr);
-                    int? bits = url is null ? null : gifToBits(url);
+                    int? bits = url is null ? null : gifToBits(url, style.Bg);
                     grid.Put(row, col, ' ', style.Fg, style.Bg, bits is int b ? (byte)(b & 63) : (byte)0);
                     col++;
                 }
@@ -310,27 +310,35 @@ public sealed class TeletextSource : IDataSource
 
     // ───────────────────────── GIF мозаики SVT ─────────────────────────
 
+    /// <summary>
+    /// Кеш битов: ключ — id GIF + цвет фона ячейки. Папка ttgif2 — версия формата: старый кеш в ttgif
+    /// (фон = самый частый цвет) давал инвертированные ячейки и больше не читается.
+    /// </summary>
     private static readonly ConcurrentDictionary<string, int> GifBitsCache = new();
     private static readonly Regex GifIdRe = new(@"/chars/(\d+)\.gif", RegexOptions.Compiled);
 
     private static string GifCacheDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Phosphor", "cache", "ttgif");
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Phosphor", "cache", "ttgif2");
 
-    private static string GifUrl(string id) => "https://l.texttv.nu/storage/chars/" + id + ".gif";
-
-    /// <summary>Биты мозаики по URL GIF из памяти или с диска; null — пока неизвестно.</summary>
-    private static int? GifBitsFromCache(string url)
+    /// <summary>Ключ кеша; null — URL не похож на GIF мозаики.</summary>
+    private static string? GifKey(string url, byte bg)
     {
         var m = GifIdRe.Match(url);
-        if (!m.Success) return null;
-        var id = m.Groups[1].Value;
-        if (GifBitsCache.TryGetValue(id, out var mem)) return mem;
+        return m.Success ? m.Groups[1].Value + "-" + bg : null;
+    }
+
+    /// <summary>Биты мозаики по URL GIF и фону ячейки из памяти или с диска; null — пока неизвестно.</summary>
+    private static int? GifBitsFromCache(string url, byte bg)
+    {
+        var key = GifKey(url, bg);
+        if (key is null) return null;
+        if (GifBitsCache.TryGetValue(key, out var mem)) return mem;
         try
         {
-            var path = Path.Combine(GifCacheDir, id + ".bits");
+            var path = Path.Combine(GifCacheDir, key + ".bits");
             if (File.Exists(path) && int.TryParse(File.ReadAllText(path).Trim(), out var disk) && disk is >= 0 and <= 63)
             {
-                GifBitsCache[id] = disk;
+                GifBitsCache[key] = disk;
                 return disk;
             }
         }
@@ -341,24 +349,38 @@ public sealed class TeletextSource : IDataSource
         return null;
     }
 
+    /// <summary>Пары (URL GIF, фон ячейки) всех мозаичных ячеек страницы.</summary>
+    private static List<(string Url, byte Bg)> SvtImageCells(string html)
+    {
+        var list = new List<(string Url, byte Bg)>();
+        foreach (var t in Tokenize(html))
+        {
+            if (t.Kind != TokKind.Open || t.Name != "span") continue;
+            var cls = ClassesOf(t.Attr);
+            if (!cls.Contains("bgImg")) continue;
+            var url = UrlOf(t.Attr);
+            if (url is not null) list.Add((url, SvtStyle(cls).Bg));
+        }
+        return list;
+    }
+
     /// <summary>Скачать GIF, которых ещё нет в кеше (не больше 150 за обновление, пауза 100 мс).</summary>
     private static async Task<int> PrefetchGifsAsync(HttpClient http, string json, int newSoFar, CancellationToken ct)
     {
-        var ids = GifIdRe.Matches(SvtHtml(json)).Select(m => m.Groups[1].Value).Distinct();
-        foreach (var id in ids)
+        foreach (var (url, bg) in SvtImageCells(SvtHtml(json)).Distinct())
         {
-            var url = GifUrl(id);
-            if (GifBitsFromCache(url) is not null) continue;
+            var key = GifKey(url, bg);
+            if (key is null || GifBitsFromCache(url, bg) is not null) continue;
             if (newSoFar >= MaxNewGifsPerUpdate) break;
             newSoFar++;
             try
             {
                 await Task.Delay(GifPause, ct);
                 var bytes = await http.GetByteArrayAsync(url, ct);
-                if (DecodeGifBits(bytes) is int bits)
+                if (DecodeGifBits(bytes, bg) is int bits)
                 {
-                    GifBitsCache[id] = bits;
-                    SaveGifBits(id, bits);
+                    GifBitsCache[key] = bits;
+                    SaveGifBits(key, bits);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -373,12 +395,12 @@ public sealed class TeletextSource : IDataSource
         return newSoFar;
     }
 
-    private static void SaveGifBits(string id, int bits)
+    private static void SaveGifBits(string key, int bits)
     {
         try
         {
             Directory.CreateDirectory(GifCacheDir);
-            File.WriteAllText(Path.Combine(GifCacheDir, id + ".bits"), bits.ToString());
+            File.WriteAllText(Path.Combine(GifCacheDir, key + ".bits"), bits.ToString());
         }
         catch (Exception)
         {
@@ -386,12 +408,36 @@ public sealed class TeletextSource : IDataSource
         }
     }
 
+    /// <summary>Классическая палитра 0..7 в RGB; цвета пикселей GIF телетекста приводятся к ближайшему из них.</summary>
+    private static readonly (int R, int G, int B)[] ClassicRgb =
+    {
+        (0, 0, 0), (255, 0, 0), (0, 255, 0), (255, 255, 0),
+        (0, 0, 255), (255, 0, 255), (0, 255, 255), (255, 255, 255),
+    };
+
+    private static byte NearestColour(Color c)
+    {
+        int best = 0, bestD = int.MaxValue;
+        for (int i = 0; i < ClassicRgb.Length; i++)
+        {
+            var (r, g, b) = ClassicRgb[i];
+            int d = (c.R - r) * (c.R - r) + (c.G - g) * (c.G - g) + (c.B - b) * (c.B - b);
+            if (d < bestD)
+            {
+                bestD = d;
+                best = i;
+            }
+        }
+        return (byte)best;
+    }
+
     /// <summary>
-    /// GIF одного символа → 6 бит секстелей. Фон — самый частый цвет. Область 2×3 «включена», если
-    /// больше 50% её пикселей отличаются от фона. Бит r*2+c: 0 — верх-лево, 1 — верх-право, 2 — середина-лево, ...
+    /// GIF одного символа → 6 бит секстелей. Фон ячейки bg (0..7, из класса bgXX в HTML) — ровно цвет фона в GIF:
+    /// пиксель «включён», если его цвет отличается от фона (передний план). Область 2×3 включена, если больше
+    /// 50% её пикселей включены. Бит r*2+c: 0 — верх-лево, 1 — верх-право, 2 — середина-лево, ...
     /// Для тестов и для PrefetchGifsAsync. null — картинку не удалось открыть.
     /// </summary>
-    public static int? DecodeGifBits(byte[] gif)
+    public static int? DecodeGifBits(byte[] gif, byte bg)
     {
         try
         {
@@ -400,16 +446,10 @@ public sealed class TeletextSource : IDataSource
             int w = bmp.Width, h = bmp.Height;
             if (w < 2 || h < 3) return null;
 
-            var px = new int[w * h];
-            var counts = new Dictionary<int, int>();
+            var lit = new bool[w * h];
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
-                {
-                    int argb = bmp.GetPixel(x, y).ToArgb();
-                    px[y * w + x] = argb;
-                    counts[argb] = counts.GetValueOrDefault(argb) + 1;
-                }
-            int bg = counts.MaxBy(kv => kv.Value).Key;
+                    lit[y * w + x] = NearestColour(bmp.GetPixel(x, y)) != bg;
 
             int bits = 0;
             for (int r = 0; r < 3; r++)
@@ -417,14 +457,14 @@ public sealed class TeletextSource : IDataSource
                 {
                     int x0 = c * w / 2, x1 = (c + 1) * w / 2;
                     int y0 = r * h / 3, y1 = (r + 1) * h / 3;
-                    int total = 0, lit = 0;
+                    int total = 0, on = 0;
                     for (int y = y0; y < y1; y++)
                         for (int x = x0; x < x1; x++)
                         {
                             total++;
-                            if (px[y * w + x] != bg) lit++;
+                            if (lit[y * w + x]) on++;
                         }
-                    if (total > 0 && lit * 2 > total) bits |= 1 << (r * 2 + c);
+                    if (total > 0 && on * 2 > total) bits |= 1 << (r * 2 + c);
                 }
             return bits;
         }

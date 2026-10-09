@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+
+  <channel>
+    <title><![CDATA[Лучшие публикации за неделю ]]></title>
+    <link>https://habr.com/ru/articles/top/weekly/</link>
+    <description><![CDATA[Лучшие публикации за последние 7 дней ]]></description>
+    <language>ru</language>
+    <managingEditor>editor@habr.com</managingEditor>
+    <generator>habr.com</generator>
+    <pubDate>Fri, 09 Oct 2026 11:37:08 GMT</pubDate>
+    
+    
+      <image>
+        <link>https://habr.com/ru/</link>
+        <url>https://habrastorage.org/webt/ym/el/wk/ymelwk3zy1gawz4nkejl_-ammtc.png</url>
+        <title>Хабр</title>
+      </image>
+<item><title><![CDATA[Не ИИ заменит людей, а люди заменят ИИ. И это уже происходит]]></title><link>https://habr.com/ru/articles/1090612/?utm_source=habrahabr&amp;utm_medium=rss&amp;utm_campaign=1090612</link><pubDate>Mon, 05 Oct 2026 14:58:52 GMT</pubDate><description></description></item>
+<item><title><![CDATA[Я завёл реестр реестров. Теперь в России на один реестр больше]]></title><link>https://habr.com/ru/articles/1090060/?utm_source=habrahabr&amp;utm_medium=rss&amp;utm_campaign=1090060</link><pubDate>Sun, 04 Oct 2026 08:04:29 GMT</pubDate><description></description></item>
+<item><title><![CDATA[Aquilum — open source аналог Obsidian на Rust, который потребляет около 9 МБ ОЗУ]]></title><link>https://habr.com/ru/articles/1090122/?utm_source=habrahabr&amp;utm_medium=rss&amp;utm_campaign=1090122</link><pubDate>Sun, 04 Oct 2026 09:55:16 GMT</pubDate><description></description></item>
+<item><title><![CDATA[Код еще никогда не был так дешев. И еще никогда так дорого не обходился]]></title><link>https://habr.com/ru/articles/1091806/?utm_source=habrahabr&amp;utm_medium=rss&amp;utm_campaign=1091806</link><pubDate>Thu, 08 Oct 2026 04:01:09 GMT</pubDate><description></description></item>
+<item><title><![CDATA[Vim против всех: редактор, в который можно войти, но нельзя выйти]]></title><link>https://habr.com/ru/articles/1090052/?utm_source=habrahabr&amp;utm_medium=rss&amp;utm_campaign=1090052</link><pubDate>Tue, 06 Oct 2026 12:59:39 GMT</pubDate><description></description></item>
+</channel></rss>

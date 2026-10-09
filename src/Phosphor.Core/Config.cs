@@ -117,7 +117,7 @@ public sealed class PhosphorConfig
       },
       "overlay": { "enabled": true, "id": "hud", "probability": 0.4 },
       "audio": { "enabled": true, "sensitivity": 1.0, "maxPulse": 0.8, "minBeatIntervalMs": 250 },
-      "network": { "enabled": true, "city": "Москва", "news": ["tass", "bbc", "reddit:worldnews"], "teletext": ["svt", "nos"] },
+      "network": { "enabled": true, "city": "Москва", "news": ["nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc"], "calmNews": true, "teletext": ["svt", "nos"] },
       "exit": { "mouseThresholdPx": 12 }
     }
     """;
@@ -181,7 +181,7 @@ public sealed class NetworkConfig
     /// <summary>Город для погоды — любое название (геокодер Open-Meteo), например "Москва", "Berlin".</summary>
     public string City { get; set; } = "Москва";
     /// <summary>Источники новостей по id (список — в Phosphor.Data). Неизвестные — пропускаются с предупреждением.</summary>
-    public List<string> News { get; set; } = new() { "tass", "bbc", "reddit:worldnews" };
+    public List<string> News { get; set; } = new() { "nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc" };
     /// <summary>Каналы телетекста по id.</summary>
     public List<string> Teletext { get; set; } = new() { "svt", "nos" };
     /// <summary>Координаты города (WGS84). Заданы — геокодер не нужен (например, когда его режет сеть/провайдер).

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet href="/css/rss.xsl" type="text/xsl"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"> 
+<!-- If you're seeing this, you've clicked on a link for ESA's RSS feeds. 
+This file is not meant to be read by a Web browser directly. 
+Instead you're meant to copy the URL for the file, and paste it into your favorite RSS reader. -->
+<channel>
+
+<category>space</category>
+<language>en-GB</language>
+<ttl>600</ttl>
+<copyright>Copyright European Space Agency</copyright>
+<managingEditor>rss@esa.int (ESA rss manager)</managingEditor>
+
+
+				
+			
+						 
+	
+
+
+
+
+
+
+					 
+
+	
+																																					
+				
+																																																								
+				
+														
+				
+												
+			
+	
+					
+			
+			 
+		
+					
+			
+			 
+		
+					
+						
+						 
+		
+					
+			
+			 
+						
+ 
+			  
+	
+	
+
+<title>ESA Space Science</title>
+<description>ESA Space Science</description>
+<link>https://www.esa.int/Science_Exploration/Space_Science</link>
+<atom:link href="https://www.esa.int/rssfeed/Science_Exploration/Space_Science" rel="self" type="application/rss+xml" />
+	<pubDate>Thu, 08 Oct 2026 11:00:00 +0200</pubDate>
+<lastBuildDate>Thu, 08 Oct 2026 11:00:00 +0200</lastBuildDate>
+<docs>http://blogs.law.harvard.edu/tech/rss</docs>
+<item><title>Solar Orbiter tracks origin of mysterious magnetic switchbacks</title><link><![CDATA[https://www.esa.int/Science_Exploration/Space_Science/Solar_Orbiter/Solar_Orbiter_tracks_origin_of_mysterious_magnetic_switchbacks]]></link><pubDate>Thu, 08 Oct 2026 11:00:00 +0200</pubDate><description></description></item>
+<item><title>Mars’s oddest cloud may be even odder than we thought</title><link><![CDATA[https://www.esa.int/Science_Exploration/Space_Science/Mars_Express/Mars_s_oddest_cloud_may_be_even_odder_than_we_thought]]></link><pubDate>Wed, 07 Oct 2026 17:00:00 +0200</pubDate><description></description></item>
+<item><title>Webb captures commotion from nebula’s stellar jets</title><link><![CDATA[https://www.esa.int/ESA_Multimedia/Images/2026/10/Webb_captures_commotion_from_nebula_s_stellar_jets]]></link><pubDate>Tue, 06 Oct 2026 15:00:00 +0200</pubDate><description></description></item>
+<item><title>Science begins for Smile</title><link><![CDATA[https://www.esa.int/Science_Exploration/Space_Science/Smile/Science_begins_for_Smile]]></link><pubDate>Wed, 30 Sep 2026 09:05:00 +0200</pubDate><description></description></item>
+<item><title>Happy New Year on Mars</title><link><![CDATA[https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/Happy_New_Year_on_Mars]]></link><pubDate>Wed, 30 Sep 2026 08:00:00 +0200</pubDate><description></description></item>
+</channel></rss>

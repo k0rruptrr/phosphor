@@ -41,6 +41,6 @@
   },
   "overlay": { "enabled": true, "id": "hud", "probability": 0.4 },
   "audio": { "enabled": true, "sensitivity": 1.0, "maxPulse": 0.8, "minBeatIntervalMs": 250 },
-  "network": { "enabled": true, "city": "Москва", "news": ["tass", "bbc", "reddit:worldnews"], "teletext": ["svt", "nos"] },
+  "network": { "enabled": true, "city": "Москва", "news": ["nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc"], "calmNews": true, "teletext": ["svt", "nos"] },
   "exit": { "mouseThresholdPx": 12 }
 }

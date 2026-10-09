@@ -1,3 +1,4 @@
+using System.Drawing;
 using System.Text;
 using System.Text.RegularExpressions;
 using Phosphor.Core;
@@ -9,12 +10,12 @@ public class TeletextSourceTests
     private static string FxPath(string name) => Path.Combine(AppContext.BaseDirectory, "Fixtures", name);
     private static string Fx(string name) => File.ReadAllText(FxPath(name));
 
-    /// <summary>URL GIF → биты из фикстуры tt-gif-&lt;id&gt;.gif; неизвестные GIF — 0x3F.</summary>
-    private static int? GifFromFixtures(string url)
+    /// <summary>URL GIF + фон ячейки → биты из фикстуры tt-gif-&lt;id&gt;.gif; неизвестные GIF — 0x3F.</summary>
+    private static int? GifFromFixtures(string url, byte bg)
     {
         var id = Regex.Match(url, @"/chars/(\d+)\.gif").Groups[1].Value;
         var path = FxPath("tt-gif-" + id + ".gif");
-        return File.Exists(path) ? TeletextSource.DecodeGifBits(File.ReadAllBytes(path)) : 0x3F;
+        return File.Exists(path) ? TeletextSource.DecodeGifBits(File.ReadAllBytes(path), bg) : 0x3F;
     }
 
     private static string Row(TeletextPage p, int r) => new string(p.Chars, r * p.Cols, p.Cols);
@@ -67,6 +68,21 @@ public class TeletextSourceTests
     {
         var p = TeletextSource.ParseNos(Fx("tt-nos-101.json"), 101);
         Assert.Contains("NOS", Row(p, 0));
+    }
+
+    /// <summary>
+    /// Сущности мозаики NOS → биты секстеля, выписаны вручную по кодам телетекста: биты 0..4 — код &amp; 0x1F
+    /// (TL, TR, ML, MR, BL), бит 5 (BR) — код 0x40. &#xF03F; → 0b011111 = 31; &#xF060; → только BR = 32;
+    /// &#xF07F; → все шесть = 63.
+    /// </summary>
+    [Fact]
+    public void ParseNos_mosaic_entities_map_to_sextant_bits()
+    {
+        const string json = "{\"content\":\"&#xF03F;&#xF060;&#xF07F;\"}";
+        var p = TeletextSource.ParseNos(json, 100);
+        Assert.Equal(31, p.Mosaic[0]);
+        Assert.Equal(32, p.Mosaic[1]);
+        Assert.Equal(63, p.Mosaic[2]);
     }
 
     [Fact]
@@ -125,18 +141,61 @@ public class TeletextSourceTests
         Assert.Equal(((byte)15, (byte)0), TeletextSource.StretchSextant(3));
     }
 
+    /// <summary>
+    /// Ожидаемые биты выписаны вручную по пикселям фикстур (13×16; колонки [0..5] и [6..12]; ряды [0..4], [5..9], [10..15]).
+    /// Фон — цвет класса bgXX ячейки из tt-svt-100.json; «включено» — пиксели другого цвета (переднего плана).
+    /// 2015754887, фон W: синий — правые 7 колонок во всех рядах → биты 1, 3, 5 = 2 + 8 + 32 = 42.
+    /// 2335531887, фон B: белый — правые 7 колонок, ряды 11..15 → бит 5 = 32.
+    /// 2413702233, фон B: белый — ряды 5..15 целиком → биты 2, 3, 4, 5 = 60.
+    /// 2754943555, фон B: белый — левые 6 колонок, ряды 5..15 → биты 2, 4 = 20.
+    /// 693852549, фон B: белый — правые 7 колонок, ряды 5..15 → биты 3, 5 = 40.
+    /// </summary>
+    [Theory]
+    [InlineData("2015754887", 7, 42)]
+    [InlineData("2335531887", 4, 32)]
+    [InlineData("2413702233", 4, 60)]
+    [InlineData("2754943555", 4, 20)]
+    [InlineData("693852549", 4, 40)]
+    public void DecodeGifBits_fixtures_match_hand_decoded_bits(string id, byte bg, int expected)
+    {
+        var bytes = File.ReadAllBytes(FxPath("tt-gif-" + id + ".gif"));
+        Assert.Equal(expected, TeletextSource.DecodeGifBits(bytes, bg));
+    }
+
+    /// <summary>
+    /// Порядок бит декодера = порядок GlyphSet.Sextant: бит r*2+c — ряд r (0..2) и колонка c (0..1). Синтетический GIF 13×16,
+    /// чёрный фон, белая ровно одна область 2×3 с битом b; декодер должен вернуть 1 &lt;&lt; b.
+    /// </summary>
     [Fact]
-    public void DecodeGifBits_gives_bits_in_range_and_not_trivial()
+    public void DecodeGifBits_bit_order_matches_GlyphSet_sextant()
+    {
+        for (int b = 0; b < 6; b++)
+        {
+            int r = b / 2, c = b % 2;
+            using var bmp = new Bitmap(13, 16, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            for (int y = 0; y < 16; y++)
+                for (int x = 0; x < 13; x++)
+                {
+                    bool on = x >= c * 13 / 2 && x < (c + 1) * 13 / 2 && y >= r * 16 / 3 && y < (r + 1) * 16 / 3;
+                    bmp.SetPixel(x, y, on ? Color.White : Color.Black);
+                }
+            using var ms = new MemoryStream();
+            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Gif);
+            Assert.Equal(1 << b, TeletextSource.DecodeGifBits(ms.ToArray(), 0));
+        }
+    }
+
+    [Fact]
+    public void DecodeGifBits_fixtures_stay_in_range()
     {
         var files = Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "Fixtures"), "tt-gif-*.gif");
         Assert.NotEmpty(files);
-        var values = files.Select(f => TeletextSource.DecodeGifBits(File.ReadAllBytes(f))).ToList();
-        Assert.All(values, v =>
+        foreach (var f in files)
         {
+            var v = TeletextSource.DecodeGifBits(File.ReadAllBytes(f), 0);
             Assert.NotNull(v);
             Assert.InRange(v!.Value, 0, 63);
-        });
-        Assert.Contains(values, v => v != 0 && v != 63);
+        }
     }
 
     [Fact]

@@ -91,6 +91,145 @@ public sealed class WeatherSourceTests
             CultureInfo.CurrentCulture = previous;
         }
     }
+
+    private static WeatherSnapshot CachedMoscow(double lat, double lon, string? query = "Москва") =>
+        new("Москва", lat, lon, new WeatherNow(1, 1, 1, 0), Array.Empty<WeatherDay>(), DateTimeOffset.Now, true,
+            "open-meteo", query);
+
+    [Fact]
+    public async Task ConfigCoords_SkipGeocoder()
+    {
+        var fake = new FakeHttp().OnFile("api.open-meteo.com/v1/forecast", "weather-forecast-moscow.json");
+        var snap = Assert.IsType<WeatherSnapshot>(
+            await new WeatherSource("Москва", 55.75204, 37.61781).FetchAsync(fake.Client(), CancellationToken.None));
+
+        Assert.DoesNotContain(fake.Requests, r => r.Contains("geocoding-api"));
+        Assert.Contains("latitude=55.75204&longitude=37.61781", fake.Requests.Single());
+        Assert.Equal("open-meteo", snap.Source);
+        Assert.Equal("Москва", snap.Query);
+    }
+
+    [Fact]
+    public async Task GeocoderDown_UsesCachedCoords()
+    {
+        // Геокодер не отвечает (404 в фейке), прогноз доступен: координаты берутся из кеша погоды.
+        var fake = new FakeHttp().OnFile("api.open-meteo.com/v1/forecast", "weather-forecast-moscow.json");
+        var src = new WeatherSource("Москва");
+        src.Restore(CachedMoscow(55.75, 37.62));
+
+        var snap = Assert.IsType<WeatherSnapshot>(await src.FetchAsync(fake.Client(), CancellationToken.None));
+
+        Assert.Contains("latitude=55.75&longitude=37.62", fake.Requests.Single(r => r.Contains("api.open-meteo.com/v1/forecast")));
+        Assert.Equal(55.75, snap.Lat);
+        Assert.Equal(7, snap.Days.Count);
+    }
+
+    [Fact]
+    public async Task GeocoderDown_NoCache_Throws()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => new WeatherSource("Москва").FetchAsync(new FakeHttp().Client(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CacheOfOtherCity_NotUsedForCoords()
+    {
+        var src = new WeatherSource("Берлин");
+        src.Restore(CachedMoscow(55.75, 37.62));   // Query кеша — «Москва»
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => src.FetchAsync(new FakeHttp().Client(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task OpenMeteoDown_FallsBackToMetNo()
+    {
+        // Даты фикстуры (2026-10-09) сдвигаем на сегодня: источник отбрасывает прошедшие дни.
+        var today = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var body = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "weather-metno-moscow.json"))
+            .Replace("2026-10-09T", today + "T", StringComparison.Ordinal);
+        var fake = new FakeHttp()
+            .OnFile("geocoding-api.open-meteo.com", "weather-geo-moscow.json")
+            .On("api.met.no/weatherapi/locationforecast/2.0/compact", body);
+
+        var snap = Assert.IsType<WeatherSnapshot>(
+            await new WeatherSource("Москва").FetchAsync(fake.Client(), CancellationToken.None));
+
+        Assert.Equal("met.no", snap.Source);
+        Assert.Equal("Москва", snap.Query);
+        Assert.Equal(7, snap.Days.Count);
+        // Первая точка фикстуры: 15.4 °C, облачно (cloudy → WMO 3), ветер 3.3 м/с = 11.88 км/ч
+        Assert.Equal(15.4, snap.Now.TempC);
+        Assert.Equal(3, snap.Now.Code);
+        Assert.InRange(snap.Now.WindKmh, 11.8, 12.0);
+        foreach (var d in snap.Days)
+        {
+            Assert.Contains(d.Code, ValidWmo.Concat(new[] { -1 }));
+            if (!double.IsNaN(d.MinC) && !double.IsNaN(d.MaxC)) Assert.True(d.MinC <= d.MaxC, $"{d.Date}");
+        }
+        Assert.Contains(fake.Requests, r => r.Contains("api.met.no"));
+    }
+
+    [Fact]
+    public async Task BothDown_ThrowsOpenMeteoError()
+    {
+        var fake = new FakeHttp().OnFile("geocoding-api.open-meteo.com", "weather-geo-moscow.json");
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => new WeatherSource("Москва").FetchAsync(fake.Client(), CancellationToken.None));
+        Assert.Contains(fake.Requests, r => r.Contains("api.met.no"));
+    }
+
+    [Fact]
+    public async Task NullsInOpenMeteo_DoNotBreakFetch()
+    {
+        const string json = """
+        {"current":{"temperature_2m":null,"weather_code":3,"wind_speed_10m":5.4,"wind_direction_10m":45},
+         "daily":{"time":["2026-10-09","2026-10-10"],"weather_code":[3,null],
+                  "temperature_2m_max":[12.4,null],"temperature_2m_min":[3.2,1.0],"precipitation_sum":[null,0.5]}}
+        """;
+        var fake = new FakeHttp().On("api.open-meteo.com/v1/forecast", json);
+
+        var snap = Assert.IsType<WeatherSnapshot>(
+            await new WeatherSource("Москва", 55.75, 37.62).FetchAsync(fake.Client(), CancellationToken.None));
+
+        Assert.True(double.IsNaN(snap.Now.TempC));
+        Assert.Equal(3, snap.Now.Code);
+        Assert.Equal(2, snap.Days.Count);
+        Assert.Equal(12.4, snap.Days[0].MaxC);
+        Assert.True(double.IsNaN(snap.Days[0].PrecipMm));
+        Assert.Equal(1.0, snap.Days[1].MinC);
+        Assert.True(double.IsNaN(snap.Days[1].MaxC));
+        Assert.Equal(-1, snap.Days[1].Code);
+    }
+
+    [Fact]
+    public async Task NullsInMetNo_DoNotBreakFetch()
+    {
+        var t = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        const string template = """
+        {"properties":{"timeseries":[
+          {"time":"TIME","data":{"instant":{"details":{"air_temperature":null,"wind_speed":3.0,"wind_from_direction":null}},
+            "next_1_hours":{"summary":{"symbol_code":"cloudy"},"details":{"precipitation_amount":null}}}}]}}
+        """;
+        string json = template.Replace("TIME", t, StringComparison.Ordinal);
+        var fake = new FakeHttp()
+            .OnFile("geocoding-api.open-meteo.com", "weather-geo-moscow.json")
+            .On("api.met.no/weatherapi/locationforecast/2.0/compact", json);
+
+        // Open-Meteo недоступен (404), поэтому разбирается met.no
+        var snap = Assert.IsType<WeatherSnapshot>(
+            await new WeatherSource("Москва").FetchAsync(fake.Client(), CancellationToken.None));
+
+        Assert.Equal("met.no", snap.Source);
+        Assert.True(double.IsNaN(snap.Now.TempC));
+        Assert.True(double.IsNaN(snap.Now.WindDirDeg));
+        Assert.InRange(snap.Now.WindKmh, 10.7, 10.9);   // 3.0 м/с
+        Assert.Equal(3, snap.Now.Code);
+        Assert.Single(snap.Days);
+        Assert.True(double.IsNaN(snap.Days[0].MaxC));
+        Assert.True(double.IsNaN(snap.Days[0].PrecipMm));
+    }
 }
 
 [Trait("Category", "Live")]

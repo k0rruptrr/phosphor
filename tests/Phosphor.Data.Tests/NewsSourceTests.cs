@@ -132,6 +132,12 @@ public sealed class NewsSourceLiveTests
     [InlineData("tass")]
     [InlineData("bbc")]
     [InlineData("reddit:worldnews")]
+    [InlineData("nplus1")]
+    [InlineData("habr")]
+    [InlineData("naked")]
+    [InlineData("nasa")]
+    [InlineData("esa")]
+    [InlineData("hn")]
     public async Task Live_Three_Headlines(string id)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };

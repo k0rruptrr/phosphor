@@ -5,15 +5,16 @@ using Phosphor.Core;
 namespace Phosphor.Filters;
 
 /// <summary>
-/// Монохром через плотность символов: яркость ячейки передаётся символом рампы, а не цветом фона.
-/// Заливочные ячейки (пробел, блоки, секстели) меняют символ по яркости; текстовые — только серый Fg/Bg.
+/// Монохром через плотность символов: яркость ячейки передаётся штриховкой рампы, а не цветом фона.
+/// Заливочные ячейки (пробел, блоки штриховки) меняют символ по яркости; полублоки '▀' сохраняют форму
+/// ('▀'/'▄' по более светлой половине), текстовые ячейки и секстели — только серый Fg/Bg.
 /// Шаг сетки, запускается до GPU-фильтров. Apply не аллоцирует.
 /// Горячий цикл целочисленный: яркость 0..255, все преобразования (contrast, gamma, black, рампа, дизеринг,
 /// серые цвета) заранее вычислены в таблицах в Configure/конструкторе.
 /// </summary>
 public sealed class MonoPass : IGridPass
 {
-    private const string DefaultRamp = " .:-=+*#%@";
+    private const string DefaultRamp = " ░▒▓█";
     private const float DefaultContrast = 1f;
     private const float DefaultGamma = 1f;
     private const bool DefaultDither = true;
@@ -24,10 +25,9 @@ public sealed class MonoPass : IGridPass
     /// <summary>Заливочные символы блоков и штриховок (IsFill).</summary>
     private const string FillBlocks = "░▒▓█▀▄▌▐■▪";
     private const char UpperHalf = '▀';
-    private const string UpperForms = "'`^\"";
-    private const string LowerForms = "._,";
-    /// <summary>Порог разницы верх/низ для форм '▀' — 0.35 в байтах (0.35*255 = 89.25), сравнение в целых ×100.</summary>
-    private const int FormThresholdX100 = 8925;
+    private const char LowerHalf = '▄';
+    /// <summary>Порог разницы верх/низ для полублоков '▀'/'▄' — 0.35 в байтах (0.35*255 = 89.25), сравнение в целых ×100.</summary>
+    private const int HalfThresholdX100 = 8925;
 
     /// <summary>Матрица Байера 4×4.</summary>
     private static readonly int[] Bayer =
@@ -38,7 +38,7 @@ public sealed class MonoPass : IGridPass
         15,  7, 13,  5,
     };
 
-    /// <summary>Заливочные ячейки: пробел, блоки, секстели. bool[65536], заполняется один раз.</summary>
+    /// <summary>Заливочные ячейки: пробел и блоки штриховки/полублоки. Секстели сюда не входят (их цвет — как у текста). bool[65536], заполняется один раз.</summary>
     private static readonly bool[] FillTable = BuildFillTable();
 
     private static readonly Rgba Black = Rgba.Black;
@@ -55,7 +55,6 @@ public sealed class MonoPass : IGridPass
     // Серые цвета по яркости 0..255.
     private Rgba[] _textFg = new Rgba[256];
     private Rgba[] _textBg = new Rgba[256];
-    private Rgba[] _formFg = new Rgba[256];
 
     public MonoPass() => BuildTables();
 
@@ -181,7 +180,6 @@ public sealed class MonoPass : IGridPass
             float sh = Shape(lv);
             _textFg[v] = Gray(MathF.Max(0.25f, sh));
             _textBg[v] = sh < TextBgBlackThreshold ? Black : Gray(sh);
-            _formFg[v] = Gray(0.35f + 0.65f * sh);
         }
     }
 
@@ -209,7 +207,6 @@ public sealed class MonoPass : IGridPass
         var fillFg = _fillFg;
         var textFg = _textFg;
         var textBg = _textBg;
-        var formFg = _formFg;
 
         for (int y = 0; y < rows; y++)
         {
@@ -224,7 +221,7 @@ public sealed class MonoPass : IGridPass
 
                 if (!fillTable[ch])
                 {
-                    // Текстовая ячейка: символ не трогаем, Fg не темнее 0.25.
+                    // Текстовая ячейка или секстель: символ не трогаем, Fg не темнее 0.25.
                     c.Fg = textFg[lf];
                     c.Bg = textBg[lb];
                     continue;
@@ -234,16 +231,22 @@ public sealed class MonoPass : IGridPass
                 if (ch == UpperHalf)
                 {
                     int diff = lf > lb ? lf - lb : lb - lf;
-                    if (diff * 100 > FormThresholdX100)
+                    if (diff * 100 > HalfThresholdX100)
                     {
-                        // Форма: символ по средней яркости, Fg — от более яркой половины.
-                        int mean = (lf + lb) >> 1;
+                        // Полублок сохраняет форму: '▀' если светлее верх, '▄' если светлее низ.
+                        // Fg — серый по светлой половине, Bg — серый по тёмной (или чёрный по порогу).
                         if (lf > lb)
-                            c.Ch = UpperForms[Pick(UpperForms.Length, mean)];
+                        {
+                            c.Ch = UpperHalf;
+                            c.Fg = textFg[lf];
+                            c.Bg = textBg[lb];
+                        }
                         else
-                            c.Ch = LowerForms[Pick(LowerForms.Length, mean)];
-                        c.Fg = formFg[lf > lb ? lf : lb];
-                        c.Bg = Black;
+                        {
+                            c.Ch = LowerHalf;
+                            c.Fg = textFg[lb];
+                            c.Bg = textBg[lf];
+                        }
                     }
                     else
                     {
@@ -267,20 +270,11 @@ public sealed class MonoPass : IGridPass
         }
     }
 
-    private static int Pick(int len, int mean255)
-    {
-        int i = mean255 * len / 255;
-        if (i < 0) i = 0;
-        if (i >= len) i = len - 1;
-        return i;
-    }
-
     private static bool[] BuildFillTable()
     {
         var t = new bool[65536];
         t[' '] = true;
         foreach (var c in FillBlocks) t[c] = true;
-        for (int c = 0xE000; c <= 0xE03F; c++) t[c] = true;
         return t;
     }
 

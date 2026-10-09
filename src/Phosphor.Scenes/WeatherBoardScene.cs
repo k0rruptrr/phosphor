@@ -13,7 +13,7 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
     public string Id => "weatherboard";
     public int PreferredRows => 36;
 
-    private static readonly string[] Keys = { "weather", "clock" };
+    private static readonly string[] Keys = { "weather", "weather.status", "clock" };
     public IReadOnlyList<string> DataKeys => Keys;
 
     /// <summary>Порядок символов при перелистывании (от текущего к целевому, по кругу).</summary>
@@ -24,6 +24,7 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
     private const float TickerSpeed = 8f;
     private const string NoCity = "───";
     private const string BlinkText = "ОЖИДАНИЕ ДАННЫХ";
+    private const string NoLinkText = "НЕТ СВЯЗИ · OPEN-METEO";
     private const string NoDataTicker = "ДАННЫЕ: OPEN-METEO · ОЖИДАНИЕ ДАННЫХ · ";
 
     private static readonly Rgba PlateBg = Rgba.Hex(0x1A1A1A);
@@ -57,6 +58,7 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
     // Данные
     private bool _hasWeather, _hasClock;
     private WeatherSnapshot? _weather;
+    private SourceStatusSnapshot? _status;   // статус последней попытки загрузки погоды
     private DateTime _clock;
     private string _ticker = NoDataTicker;
     private float _tickerPos;
@@ -128,6 +130,7 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
         _hasWeather = false;
         _hasClock = false;
         _weather = null;
+        _status = null;
         _clock = default;
         _ticker = NoDataTicker;
         _waveLeft = 45f + rng.NextSingle() * 45f;
@@ -141,14 +144,24 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
         {
             _clock = c.Local;
             _hasClock = true;
+            // Возраст кеша меняется со временем; позицию тикера не трогаем.
+            var t = BuildTicker();
+            if (t != _ticker) _ticker = t;
             Compose(snap: false);
         }
         else if (key == "weather" && snapshot is WeatherSnapshot w)
         {
             _weather = w;
             _hasWeather = true;
-            _ticker = BuildTicker(w);
+            _ticker = BuildTicker();
             _tickerPos = 0f;
+            Compose(snap: false);
+        }
+        else if (key == "weather.status" && snapshot is SourceStatusSnapshot st)
+        {
+            _status = st;
+            var t = BuildTicker();
+            if (t != _ticker) _ticker = t;
             Compose(snap: false);
         }
     }
@@ -195,12 +208,16 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
             grid.Put(_px[i], _py[i], _cur[i], fg, PlateBg);
         }
 
-        // Мигающее «ОЖИДАНИЕ ДАННЫХ» в шапке, пока данных нет.
-        if (!_hasWeather && _blinkOn && _lineY.Length > 0)
+        // Пока данных нет: мигающее «ОЖИДАНИЕ ДАННЫХ» до первой попытки, потом статично «НЕТ СВЯЗИ · OPEN-METEO».
+        bool error = _status is { Kind: not null };
+        if (!_hasWeather && (error || _blinkOn) && _lineY.Length > 0)
         {
+            string text = error ? NoLinkText : BlinkText;
+            // Строка ошибки длиннее поля мигания — кончается перед датой, не наезжая на неё.
+            int tx = error ? _dateX - NoLinkText.Length - 1 : _blinkX;
             int hy = _lineY[0];
-            for (int k = 0; k < BlinkText.Length; k++)
-                grid.Put(_blinkX + k, hy, BlinkText[k], Accent, PlateBg);
+            for (int k = 0; k < text.Length; k++)
+                grid.Put(tx + k, hy, text[k], Accent, PlateBg);
         }
 
         // Бегущий тикер.
@@ -253,12 +270,12 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
         int x = _x0;
         var w = _weather;
 
-        SetTarget(x, y, w is null ? ' ' : Wmo.Icon(w.Now.Code), Warm);
+        SetTarget(x, y, w is null ? ' ' : w.Now.Code < 0 ? '-' : Wmo.Icon(w.Now.Code), Warm);
         string temp = w is null ? "--" : Temp(w.Now.TempC);
         WriteAt(y, x + 2, RightFit(temp, 4), w is null ? Warm : TempColor(w.Now.TempC));
-        WriteAt(y, x + 7, Fit(w is null ? "--" : Wmo.Ru(w.Now.Code), 14), Warm);
+        WriteAt(y, x + 7, Fit(w is null ? "--" : CodeText(w.Now.Code), 14), Warm);
         // Open-Meteo даёт направление «откуда дует»: сторона света — как есть, стрелка — куда дует (+180°).
-        string wind = w is null
+        string wind = w is null || double.IsNaN(w.Now.WindKmh) || double.IsNaN(w.Now.WindDirDeg)
             ? "ВЕТЕР --"
             : "ВЕТЕР " + Math.Round(w.Now.WindKmh).ToString(Inv) + " КМ/Ч " + CompassFrom(w.Now.WindDirDeg)
               + " " + WindArrow(w.Now.WindDirDeg + 180.0);
@@ -278,10 +295,11 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
         WriteAt(h, x + 25, " " + Fit("ПОГОДА", 14), Dim);
 
         var w = _weather;
+        var days = VisibleDays(w);
         for (int i = 0; i < DayRows; i++)
         {
             int y = _lineY[3 + i];
-            if (w is null || i >= w.Days.Count)
+            if (w is null)
             {
                 WriteAt(y, x, Fit("-- --", 6), Warm);
                 WriteAt(y, x + 6, RightFit("--", 6), Warm);
@@ -290,23 +308,72 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
                 WriteAt(y, x + 25, " " + Fit("--", 14), Warm);
                 continue;
             }
+            // Дней меньше семи (старый кеш): хвост таблицы пустой, без «--».
+            if (i >= days.Count) continue;
 
-            var d = w.Days[i];
+            var d = days[i];
             WriteAt(y, x, Fit(Wd(d.Date.DayOfWeek) + " " + d.Date.Day.ToString("00", Inv), 6), Warm);
             WriteAt(y, x + 6, RightFit(Temp(d.MaxC), 6), TempColor(d.MaxC));
             WriteAt(y, x + 12, RightFit(Temp(d.MinC), 6), TempColor(d.MinC));
-            WriteAt(y, x + 18, RightFit(d.PrecipMm.ToString("0.0", Inv), 7), Warm);
-            WriteAt(y, x + 25, " " + Fit(Wmo.Ru(d.Code), 14), Warm);
+            WriteAt(y, x + 18, RightFit(double.IsNaN(d.PrecipMm) ? "--" : d.PrecipMm.ToString("0.0", Inv), 7), Warm);
+            WriteAt(y, x + 25, " " + Fit(CodeText(d.Code), 14), Warm);
         }
     }
 
-    private static string BuildTicker(WeatherSnapshot w)
+    /// <summary>Дни для таблицы: начиная с сегодняшнего (по снимку «clock»); прошедшие дни старого кеша не показываем.</summary>
+    private List<WeatherDay> VisibleDays(WeatherSnapshot? w)
     {
-        string coords = Math.Abs(w.Lat).ToString("0.0", Inv) + (w.Lat >= 0 ? "N" : "S") + " "
-            + Math.Abs(w.Lon).ToString("0.0", Inv) + (w.Lon >= 0 ? "E" : "W");
-        return "ДАННЫЕ: OPEN-METEO · ОБНОВЛЕНО " + w.FetchedAt.ToLocalTime().ToString("HH:mm", Inv)
-            + (w.FromCache ? " · КЕШ" : "") + " · " + coords + " · ";
+        var list = new List<WeatherDay>();
+        if (w is null) return list;
+        var today = _hasClock ? DateOnly.FromDateTime(_clock) : DateOnly.MinValue;
+        foreach (var d in w.Days)
+            if (d.Date >= today) list.Add(d);
+        return list;
     }
+
+    /// <summary>Тикер по состоянию: погода (свежая/кеш с возрастом), либо статус ошибки, либо «ожидание».</summary>
+    private string BuildTicker()
+    {
+        if (_weather is { } w)
+        {
+            string coords = Math.Abs(w.Lat).ToString("0.0", Inv) + (w.Lat >= 0 ? "N" : "S") + " "
+                + Math.Abs(w.Lon).ToString("0.0", Inv) + (w.Lon >= 0 ? "E" : "W");
+            string state = !w.FromCache
+                ? "ОБНОВЛЕНО " + w.FetchedAt.ToLocalTime().ToString("HH:mm", Inv)
+                : _hasClock ? "КЕШ · " + AgeText(w.FetchedAt) : "КЕШ";
+            // Ошибка последней попытки при уже показанных данных; «сеть выключена» — не ошибка, а настройка.
+            string err = _status is { Kind: not null and not "OFF" } st ? " · НЕТ СВЯЗИ: " + Reason(st) : "";
+            return "ДАННЫЕ: " + w.Source.ToUpperInvariant() + " · " + state + err + " · " + coords + " · ";
+        }
+        if (_status is { Kind: not null } s)
+            return NoLinkText + " · " + Reason(s) + " · ПОПЫТКА " + s.LastAttempt.ToLocalTime().ToString("HH:mm", Inv) + " · ";
+        return NoDataTicker;
+    }
+
+    /// <summary>Возраст кеша относительно часов сцены: «5 МИН НАЗАД», «3 Ч НАЗАД», «2 Д НАЗАД».</summary>
+    private string AgeText(DateTimeOffset fetched)
+    {
+        var age = _clock - fetched.LocalDateTime;
+        if (age < TimeSpan.Zero) age = TimeSpan.Zero;
+        if (age.TotalMinutes < 60) return ((int)age.TotalMinutes).ToString(Inv) + " МИН НАЗАД";
+        if (age.TotalHours < 48) return ((int)age.TotalHours).ToString(Inv) + " Ч НАЗАД";
+        return ((int)age.TotalDays).ToString(Inv) + " Д НАЗАД";
+    }
+
+    private static string Reason(SourceStatusSnapshot s) => s.Kind switch
+    {
+        "BLOCKED" => "СЕТЬ ЗАБЛОКИРОВАНА (FIREWALL?)",
+        "TIMEOUT" => "ТАЙМАУТ",
+        "DNS" => "DNS",
+        "HTTP" => (s.Message ?? "HTTP").ToUpperInvariant(),
+        "NET" => "НЕТ СОЕДИНЕНИЯ",
+        "NODATA" => "ГОРОД НЕ НАЙДЕН",
+        "PARSE" => "ОШИБКА ДАННЫХ",
+        "OFF" => "СЕТЬ ВЫКЛЮЧЕНА В КОНФИГЕ",
+        _ => "ОШИБКА",
+    };
+
+    private static string CodeText(int code) => code < 0 ? "--" : Wmo.Ru(code);
 
     /// <summary>Пластинка стоит на символе t без анимации.</summary>
     private void Settle(int i, char t)
@@ -375,13 +442,20 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
         while (_stepT[i] >= StepSec && _steps[i] > 0)
         {
             _stepT[i] -= StepSec;
-            _steps[i]--;
-            _pos[i] = (_pos[i] + 1) % Alphabet.Length;
-            _cur[i] = Alphabet[_pos[i]];
-            _flash[i] = true;
+            Step(i);
+            // Пробел не целевой символ — пластинка его пролетает (волна и перелистывание), а не показывает.
+            if (_steps[i] > 0 && _cur[i] == ' ' && _tgt[i] != ' ') Step(i);
         }
 
         if (_steps[i] == 0) _stepT[i] = 0f;
+    }
+
+    private void Step(int i)
+    {
+        _steps[i]--;
+        _pos[i] = (_pos[i] + 1) % Alphabet.Length;
+        _cur[i] = Alphabet[_pos[i]];
+        _flash[i] = true;
     }
 
     private void SetTarget(int x, int y, char ch, Rgba fg)
@@ -404,6 +478,7 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
 
     private static string Temp(double v)
     {
+        if (double.IsNaN(v)) return "--";
         int t = (int)Math.Round(v, MidpointRounding.AwayFromZero);
         return (t > 0 ? "+" : "") + t.ToString(Inv) + "°";
     }

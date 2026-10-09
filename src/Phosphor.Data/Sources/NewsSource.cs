@@ -109,6 +109,13 @@ public static class NewsCatalog
         ("interfax", "INTERFAX", "https://www.interfax.ru/rss.asp", "ru", 10, false),
         ("bbc", "BBC", "https://feeds.bbci.co.uk/news/world/rss.xml", "en", 10, false),
         ("reuters", "REUTERS", "https://news.google.com/rss/search?q=site:reuters.com&hl=en-US&gl=US&ceid=US:en", "en", 15, false),
+        // Лёгкие ленты (наука, космос); проверены curl.exe, код 200, RSS 2.0.
+        ("nplus1", "N+1", "https://nplus1.ru/rss", "ru", 30, false),
+        ("habr", "HABR", "https://habr.com/ru/rss/best/", "ru", 30, false),
+        ("naked", "NAKED", "https://www.naked-science.ru/rss", "ru", 30, false),
+        ("nasa", "NASA", "https://www.nasa.gov/feed/", "en", 30, false),
+        ("esa", "ESA", "https://www.esa.int/rssfeed/Our_Activities/Space_Science", "en", 30, false),
+        ("hn", "HN", "https://hnrss.org/frontpage", "en", 30, false),
     };
 
     /// <summary>Фиксированные id из каталога. "reddit:&lt;sub&gt;" создаётся через Create по запросу.</summary>
@@ -137,8 +144,9 @@ public static class NewsCatalog
     /// <summary>
     /// Объединение снимков новостей: свежие первыми; внутри одного часа источники чередуются;
     /// без даты — в конце; не больше 60 элементов. FetchedAt — максимум, FromCache — только если все из кеша.
+    /// calm: выкинуть заголовки по CalmFilter (+ extraWords как основы) и не давать одной ленте идти больше 2 подряд.
     /// </summary>
-    public static DataSnapshot? Merge(IReadOnlyList<DataSnapshot> perSource)
+    public static DataSnapshot? Merge(IReadOnlyList<DataSnapshot> perSource, bool calm = false, IReadOnlyList<string>? extraWords = null)
     {
         var snaps = perSource.OfType<NewsSnapshot>().ToList();
         if (snaps.Count == 0) return null;
@@ -147,6 +155,13 @@ public static class NewsCatalog
             .OrderBy(i => i.Published is null)
             .ThenByDescending(i => i.Published)
             .ToList();
+
+        string[]? stems = null;
+        if (calm)
+        {
+            stems = extraWords?.Select(w => w.Trim().ToLowerInvariant()).Where(w => w.Length > 0).ToArray();
+            sorted = sorted.Where(i => !CalmFilter.IsLoud(i.Title, stems)).ToList();
+        }
 
         var result = new List<NewsItem>();
         foreach (var hour in sorted.GroupBy(i => i.Published is { } p ? p.UtcTicks / TimeSpan.TicksPerHour : (long?)null))
@@ -157,8 +172,30 @@ public static class NewsCatalog
                     if (q.Count > 0) result.Add(q.Dequeue());
         }
 
+        if (calm) result = SpreadSources(result);
         if (result.Count > MaxMerged) result = result.GetRange(0, MaxMerged);
 
         return new NewsSnapshot(result, snaps.Max(s => s.FetchedAt), snaps.All(s => s.FromCache));
     }
+
+    /// <summary>Порядок сохраняется; из одного источника не больше 2 подряд, пока есть другие.</summary>
+    private static List<NewsItem> SpreadSources(List<NewsItem> items)
+    {
+        var pending = new List<NewsItem>(items);
+        var result = new List<NewsItem>(items.Count);
+        while (pending.Count > 0)
+        {
+            var pick = 0;
+            if (result.Count >= 2 && SameFeed(result[^1], result[^2]) && SameFeed(pending[0], result[^1]))
+            {
+                var j = pending.FindIndex(i => !SameFeed(i, result[^1]));
+                if (j > 0) pick = j;
+            }
+            result.Add(pending[pick]);
+            pending.RemoveAt(pick);
+        }
+        return result;
+    }
+
+    private static bool SameFeed(NewsItem a, NewsItem b) => a.Source == b.Source && a.Lang == b.Lang;
 }
