@@ -1,5 +1,5 @@
 # publish.ps1 - build PHOSPHOR into dist\Phosphor (Phosphor.exe + Phosphor.scr).
-# Usage: powershell -ExecutionPolicy Bypass -File scriptspublish.ps1 [-FrameworkDependent]
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\publish.ps1 [-FrameworkDependent]
 # Default is self-contained (.NET bundled, ~70 MB): the .scr runs on any PC.
 [CmdletBinding()]
 param(
