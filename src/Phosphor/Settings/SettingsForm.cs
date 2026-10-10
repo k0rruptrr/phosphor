@@ -5,6 +5,8 @@ using Phosphor.Core;
 using Phosphor.Platform;
 using WinTimer = System.Windows.Forms.Timer;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Phosphor.App.Tests")]
+
 namespace Phosphor.App.Settings;
 
 // В Phosphor.App есть свой тип Font: в этом пространстве имён берём System.Drawing.Font
@@ -97,14 +99,12 @@ internal sealed class SettingsForm : Form
         Theme.Apply(this);
         _save.FlatAppearance.BorderColor = Theme.Accent;
         _save.ForeColor = Theme.Accent;
-        _scenes.HandleCreated += (_, _) => Theme.DarkScrollbars(_scenes);
-        _presets.HandleCreated += (_, _) => Theme.DarkScrollbars(_presets);
 
         LoadControls();
         _status.Text = "Конфиг: " + _cfgPath;
         _tip.SetToolTip(_status, _cfgPath);
         FormClosing += (_, _) => _preview.Stop();
-        _scenes.SelectedIndexChanged += (_, _) => OnScenesSelection();
+        _scenes.SelectionChanged += (_, _) => OnScenesSelection();
         _tabs.SelectedIndexChanged += (_, _) => UpdatePreview();
         UpdatePreview();
     }
@@ -435,8 +435,8 @@ internal sealed class SettingsForm : Form
 
     private void OnScenesSelection()
     {
-        if (_scenes.SelectedItems.Count == 0) return;
-        _previewScene = (string)_scenes.SelectedItems[0].Tag!;
+        if (_scenes.SelectedId is null) return;
+        _previewScene = _scenes.SelectedId;
         UpdatePreview();
     }
 
@@ -763,88 +763,129 @@ internal sealed class NumBox : Panel
     }
 }
 
-/// <summary>Список с тремя состояниями: рисуется владельцем. Клик или Space циклит состояние.</summary>
-internal sealed class PickList : ListView
+/// <summary>
+/// Список с тремя состояниями: свой контрол (рисование и прокрутка здесь, без нативного ListView).
+/// Колесо, полоса с перетаскиванием, Up/Down/PageUp/PageDown/Home/End выделяют строку и держат её в видимой части; клик или Space циклит состояние.
+/// </summary>
+internal sealed class PickList : Control
 {
+    private const int RowH = 22, BarW = 10, PadL = 10;
+
     private readonly Func<string, Pick> _stateOf;
     private readonly Action<string> _cycle;
+    private readonly List<string> _ids = new();
+    private readonly ListScroll _scroll = new();
+    private bool _dragBar;
 
     public PickList(Func<string, Pick> stateOf, Action<string> cycle)
     {
         _stateOf = stateOf;
         _cycle = cycle;
-        View = View.Details;
-        OwnerDraw = true;
-        FullRowSelect = true;
-        MultiSelect = false;
-        HeaderStyle = ColumnHeaderStyle.None;
-        BorderStyle = BorderStyle.FixedSingle;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.Selectable, true);
         BackColor = Theme.Panel;
         ForeColor = Theme.Text;
         Font = Theme.Mono;
-        Columns.Add("", 540);
-        // Нативная полоса прокрутки на этой сборке Windows тёмной темой не красится: её нет, полоса рисуется ниже
-        Scrollable = false;
-        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
-        Resize += (_, _) => { if (Columns.Count > 0) Columns[0].Width = Math.Max(100, ClientSize.Width - BarW - 8); };
+        TabStop = true;
     }
 
-    private const int BarW = 10;
-    private const int WmPaint = 0x000F;
-    private bool _dragBar;
+    /// <summary>Выделенный id или null.</summary>
+    public string? SelectedId => _scroll.Selected >= 0 && _scroll.Selected < _ids.Count ? _ids[_scroll.Selected] : null;
 
-    private Rectangle BarRect => new(ClientSize.Width - BarW - 2, 2, BarW, Math.Max(10, ClientSize.Height - 4));
+    /// <summary>Индекс первой видимой строки (для проверок).</summary>
+    public int TopIndex => _scroll.Top;
 
-    private int RowHeight => Items.Count > 0 && Items[0].Bounds.Height > 0 ? Items[0].Bounds.Height : 20;
+    /// <summary>Выделенная строка (индекс) или -1.</summary>
+    public int SelectedIndex => _scroll.Selected;
 
-    private int VisibleRows => Math.Max(1, ClientSize.Height / RowHeight);
+    /// <summary>Выделение сменилось (клик, клавиши).</summary>
+    public event EventHandler? SelectionChanged;
 
-    private int TopIndex => Items.Count == 0 ? 0 : TopItem?.Index ?? 0;
-
-    private void ScrollTo(int top)
+    public void Fill(IEnumerable<string> ids)
     {
-        if (Items.Count == 0) return;
-        top = Math.Clamp(top, 0, Math.Max(0, Items.Count - VisibleRows));
-        TopItem = Items[top];
+        _ids.Clear();
+        _ids.AddRange(ids);
+        _scroll.SetCount(_ids.Count);
+        Sync();
         Invalidate();
     }
 
-    /// <summary>Полоса поверх списка: рисуем после нативной отрисовки WM_PAINT.</summary>
-    protected override void WndProc(ref Message m)
+    private void Sync() => _scroll.SetRows(Math.Max(1, Height / RowH));
+
+    private bool HasBar => _ids.Count > _scroll.Rows;
+
+    private Rectangle Track => new(Width - BarW - 2, 2, BarW, Math.Max(10, Height - 4));
+
+    protected override void OnResize(EventArgs e)
     {
-        base.WndProc(ref m);
-        if (m.Msg != WmPaint || Items.Count == 0 || IsDisposed || !IsHandleCreated) return;
-        int total = Items.Count, vis = VisibleRows;
-        if (total <= vis) return;
-        using var g = Graphics.FromHwnd(Handle);
-        var track = BarRect;
-        using (var tb = new SolidBrush(Theme.Bg)) g.FillRectangle(tb, track);
-        int thumbH = Math.Max(24, track.Height * vis / total);
-        int thumbY = track.Y + (int)((track.Height - thumbH) * (double)TopIndex / (total - vis));
-        using (var th = new SolidBrush(Theme.Border)) g.FillRectangle(th, new Rectangle(track.X + 2, thumbY, track.Width - 4, thumbH));
+        base.OnResize(e);
+        Sync();
+        Invalidate();
     }
 
-    protected override void OnMouseWheel(MouseEventArgs e)
+    protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnMouseWheel(e);
-        ScrollTo(TopIndex - e.Delta / 120 * 3);
+        Sync();
+        var g = e.Graphics;
+        g.Clear(Theme.Panel);
+        int rowsW = Width - (HasBar ? BarW + 6 : 0);
+        for (int r = 0; r < _scroll.Rows; r++)
+        {
+            int idx = _scroll.Top + r;
+            if (idx >= _ids.Count) break;
+            var rect = new Rectangle(0, r * RowH, rowsW, RowH);
+            bool sel = idx == _scroll.Selected;
+            using (var b = new SolidBrush(sel ? Theme.Select : Theme.Panel)) g.FillRectangle(b, rect);
+            if (sel && Focused)
+                using (var pen = new Pen(Theme.Accent)) g.DrawRectangle(pen, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
+
+            var id = _ids[idx];
+            var pick = _stateOf(id);
+            var (glyph, glyphColor) = pick switch
+            {
+                Pick.Off => ("○", Theme.Muted),
+                Pick.On => ("●", Theme.Text),
+                _ => ("★", Theme.Accent),
+            };
+            var flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
+            TextRenderer.DrawText(g, glyph, Theme.Glyph, new Rectangle(PadL, rect.Y, 24, RowH), glyphColor, flags);
+            TextRenderer.DrawText(g, id, Theme.Mono, new Rectangle(PadL + 30, rect.Y, rowsW - PadL - 36, RowH),
+                pick == Pick.Off ? Theme.Muted : Theme.Text, flags);
+        }
+
+        if (HasBar)
+        {
+            var track = Track;
+            using (var tb = new SolidBrush(Theme.Bg)) g.FillRectangle(tb, track);
+            var (y, h) = _scroll.Thumb(track.Height);
+            using (var th = new SolidBrush(Theme.Border)) g.FillRectangle(th, new Rectangle(track.X + 2, track.Y + y, track.Width - 4, h));
+        }
+        using (var pen = new Pen(Theme.Border)) g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
-        if (e.Button == MouseButtons.Left && e.X >= BarRect.X)
+        base.OnMouseDown(e);
+        Focus();
+        if (e.Button != MouseButtons.Left) return;
+        if (HasBar && Track.Contains(e.Location))
         {
             _dragBar = true;
-            DragTo(e.Y);
-            return; // нажатие на полосу не выбирает строку
+            DragBar(e.Y);
+            return;
         }
-        base.OnMouseDown(e);
+        Sync();
+        int row = e.Y / RowH;
+        int idx = _scroll.Top + row;
+        if (e.Y < 0 || row >= _scroll.Rows || idx >= _ids.Count) return;
+        SetSelection(idx);
+        _cycle(_ids[idx]);
+        Invalidate();
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        if (_dragBar) DragTo(e.Y);
+        if (_dragBar) DragBar(e.Y);
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -853,67 +894,81 @@ internal sealed class PickList : ListView
         _dragBar = false;
     }
 
-    private void DragTo(int y)
+    protected override void OnMouseWheel(MouseEventArgs e)
     {
-        var track = BarRect;
-        int total = Items.Count, vis = VisibleRows;
-        if (total <= vis) return;
-        double f = Math.Clamp((y - track.Y) / (double)track.Height, 0, 1);
-        ScrollTo((int)Math.Round(f * (total - vis)));
+        base.OnMouseWheel(e);
+        ScrollWheel(e.Delta);
     }
 
-    public void Fill(IEnumerable<string> ids)
+    /// <summary>Колесо: delta — как в WM_MOUSEWHEEL (120 на щелчок), 3 строки на щелчок.</summary>
+    public void ScrollWheel(int delta)
     {
-        BeginUpdate();
-        Items.Clear();
-        foreach (var id in ids) Items.Add(new ListViewItem(id) { Tag = id });
-        EndUpdate();
-    }
-
-    protected override void OnDrawItem(DrawListViewItemEventArgs e)
-    {
-        var g = e.Graphics;
-        var r = e.Bounds;
-        bool sel = e.Item.Selected;
-        using (var bg = new SolidBrush(sel ? Theme.Select : Theme.Panel))
-            g.FillRectangle(bg, r);
-
-        var id = (string)e.Item.Tag!;
-        var pick = _stateOf(id);
-        var (glyph, glyphColor) = pick switch
-        {
-            Pick.Off => ("○", Theme.Muted),
-            Pick.On => ("●", Theme.Text),
-            _ => ("★", Theme.Accent),
-        };
-        var flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
-        TextRenderer.DrawText(g, glyph, Theme.Glyph, new Rectangle(r.X + 10, r.Y, 24, r.Height), glyphColor, flags);
-        TextRenderer.DrawText(g, id, Theme.Mono, new Rectangle(r.X + 40, r.Y, r.Width - 48, r.Height),
-            pick == Pick.Off ? Theme.Muted : Theme.Text, flags);
-        e.DrawDefault = false;
-    }
-
-    // Строки рисует OnDrawItem целиком; подъячейки не нужны
-    protected override void OnDrawSubItem(DrawListViewSubItemEventArgs e) { }
-
-    protected override void OnMouseClick(MouseEventArgs e)
-    {
-        base.OnMouseClick(e);
-        if (e.Button != MouseButtons.Left || e.X >= BarRect.X) return;
-        var hit = HitTest(e.Location).Item;
-        if (hit is null) return;
-        hit.Selected = true;
-        _cycle((string)hit.Tag!);
+        Sync();
+        _scroll.ScrollBy(-delta / 120 * 3);
         Invalidate();
     }
+
+    /// <summary>Перетаскивание бегунка: y — координата мыши в контроле.</summary>
+    public void DragBar(int y)
+    {
+        Sync();
+        var track = Track;
+        var (_, h) = _scroll.Thumb(track.Height);
+        int len = track.Height - h;
+        _scroll.ScrollTo(_scroll.TopForTrack(y - track.Y - h / 2, len));
+        Invalidate();
+    }
+
+    protected override bool IsInputKey(Keys key) =>
+        key is Keys.Up or Keys.Down or Keys.PageUp or Keys.PageDown or Keys.Home or Keys.End or Keys.Space
+        || base.IsInputKey(key);
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (e.KeyCode != Keys.Space || SelectedItems.Count == 0) return;
-        _cycle((string)SelectedItems[0].Tag!);
+        if (KeyNav(e.KeyCode)) e.Handled = true;
+    }
+
+    protected override void OnGotFocus(EventArgs e)
+    {
+        base.OnGotFocus(e);
         Invalidate();
-        e.Handled = true;
+    }
+
+    protected override void OnLostFocus(EventArgs e)
+    {
+        base.OnLostFocus(e);
+        Invalidate();
+    }
+
+    /// <summary>Клавиши списка. Возвращает true, если клавиша обработана.</summary>
+    public bool KeyNav(Keys key)
+    {
+        Sync();
+        int cur = _scroll.Selected < 0 ? 0 : _scroll.Selected;
+        switch (key)
+        {
+            case Keys.Up: SetSelection(cur - 1); break;
+            case Keys.Down: SetSelection(_scroll.Selected < 0 ? 0 : cur + 1); break;
+            case Keys.PageUp: SetSelection(cur - _scroll.Rows); break;
+            case Keys.PageDown: SetSelection(_scroll.Selected < 0 ? 0 : cur + _scroll.Rows); break;
+            case Keys.Home: SetSelection(0); break;
+            case Keys.End: SetSelection(_ids.Count - 1); break;
+            case Keys.Space:
+                if (SelectedId is { } id) _cycle(id);
+                break;
+            default:
+                return false;
+        }
+        Invalidate();
+        return true;
+    }
+
+    private void SetSelection(int index)
+    {
+        int before = _scroll.Selected;
+        _scroll.Select(index);
+        if (_scroll.Selected != before) SelectionChanged?.Invoke(this, EventArgs.Empty);
     }
 }
 
