@@ -48,7 +48,7 @@ internal sealed class SceneLayer : IDisposable
         _rt = new RenderTarget(s.Gl, cols * _font.Atlas.CellWidth, rows * _font.Atlas.CellHeight);
 
         var rng = new Random(s.Rng.Next());
-        Scene.Init(cols, rows, rng, s.Config.SceneOptionsFor(sceneId));
+        Scene.Init(cols, rows, rng, s.Config.SceneOptionsFor(sceneId, _font.Atlas.CellHeight / (float)_font.Atlas.CellWidth));
         if (handoffFrom is not null && Scene is IHandoffReceiver hr)
         {
             try { hr.Seed(handoffFrom); s.Log.Info($"[{index}] эстафета → {sceneId}"); }

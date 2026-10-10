@@ -11,6 +11,10 @@ public sealed class SceneOptions
     /// <summary>Палитра: "default", "green", "amber", "mono", "rainbow". Неизвестное имя — как "default".</summary>
     public string Palette { get; init; } = "default";
 
+    /// <summary>Пропорция ячейки: высота / ширина в пикселях (Consolas 10×18 → 1.8). Зависит от шрифта (text.font) — сцены, которым
+    /// нужны круги и квадраты (радар, карта, циферблат), берут её отсюда, а не константой. Задаёт хост из атласа шрифта.</summary>
+    public float CellAspect { get; init; } = 1.8f;
+
     /// <summary>Собственные параметры сцены (объект scenes.params.&lt;id&gt;). Нет поля — значение по умолчанию.</summary>
     public JsonElement Params { get; init; } = Empty;
 

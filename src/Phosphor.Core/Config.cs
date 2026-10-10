@@ -16,6 +16,7 @@ public sealed class PhosphorConfig
     public OverlayConfig Overlay { get; set; } = new();
     public DimmerConfig Dimmer { get; set; } = new();
     public ScreenConfig Screen { get; set; } = new();
+    public TextConfig Text { get; set; } = new();
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -73,6 +74,8 @@ public sealed class PhosphorConfig
         Dimmer.FadeSec = Math.Clamp(Dimmer.FadeSec, 0f, 600f);
         Dimmer.HardwareLevel = Math.Clamp(Dimmer.HardwareLevel, 0, 100);
         Dimmer.SoftwareLevel = Math.Clamp(Dimmer.SoftwareLevel, 0f, 1f);
+        Network.FireRadiusKm = Math.Clamp(Network.FireRadiusKm, 100, 1500);
+        Network.FlightRadiusNm = Math.Clamp(Network.FlightRadiusNm, 20, 250);
     }
 
     /// <summary>
@@ -126,20 +129,22 @@ public sealed class PhosphorConfig
     }
 
     /// <summary>Параметры сцены id (объект из scenes.params) или пустой объект.</summary>
-    public SceneOptions SceneOptionsFor(string id) => new()
+    public SceneOptions SceneOptionsFor(string id, float cellAspect = 1.8f) => new()
     {
         Speed = Scenes.Speed,
         Palette = Scenes.Palette,
+        CellAspect = cellAspect,
         Params = Scenes.Params.ValueKind == JsonValueKind.Object && Scenes.Params.TryGetProperty(id, out var p) ? p.Clone() : SceneOptions.Empty,
     };
 
     public const string DefaultJson = """
     {
       "cellHeightPx": 18,
+      "text": { "font": "Consolas" },
       "scenes": {
         "enabled": ["matrix", "starfield", "pipes", "doomfire", "life", "dvd", "aquarium",
                     "teletext", "teletype", "weatherboard", "torus", "grayscott", "voxel", "boids",
-                    "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv"],
+                    "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv", "scope", "bbs", "radar", "fires", "hifi", "clocks"],
         "speed": 1.0,
         "palette": "default",
         "params": {
@@ -183,6 +188,12 @@ public sealed class PhosphorConfig
       "exit": { "mouseThresholdPx": 12 }
     }
     """;
+}
+
+/// <summary>Шрифт сетки. Font — имя семейства из перечня настроек или путь к .ttf/.otf. Не найден — Consolas.</summary>
+public sealed class TextConfig
+{
+    public string Font { get; set; } = "Consolas";
 }
 
 public sealed class ScenesConfig
