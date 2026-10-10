@@ -26,6 +26,7 @@ uniform float p_edge;         // SECAM: края гашения (светлая 
 uniform float p_bottles;      // SECAM: сигналы опознавания («бутылки») сверху кадра
 uniform float p_ghost;        // двоение (эфир): отражённая копия правее контуров
 uniform float p_ghostDelay;   // задержка отражения, доля ширины кадра
+uniform float p_fibers;       // SECAM: сила «волокон» — строчного шума (1 = как на кассете)
 
 const float PI = 3.1415927;
 const float TAU = 6.2831853;
@@ -203,7 +204,8 @@ vec2 flares(float px, int L) {
         // (2) слабый сигнал: (1 − signal)·0.9, знак +, Db ×1/3, длина ×fireSize (как до T4);
         // (3) тёмный: (y0 < 0.25) ? 0.003·fires : 0, канал по строке, случайный знак, без ×1/3, длина ×3·fireSize.
         float pC = 0.05 * p_fires * smoothstep(0.08, 0.3, e) * mul;
-        float pS = (1.0 - p_signal) * 0.9 * mul;
+        // Шум слабого сигнала: под ползунком «факелы» (0 — нет), квадрат — лёгкая просадка приёма почти не сыплет
+        float pS = (1.0 - p_signal) * (1.0 - p_signal) * 0.9 * p_fires * mul;
         float pD = (y0 < 0.25 ? 0.003 * p_fires : 0.0);
         float r = rnd(h);
         if (r < pC + pS + pD) {
@@ -319,7 +321,7 @@ void main() {
         vec3 sc = srcRgb(px, row);
         float tot = max(sc.r + sc.g + sc.b, 0.05);
         float kf = 1.0 + 0.6 * sc.g / tot - 0.4 * sc.b / tot;
-        y += kf * (0.025 * fib + dk * 0.02 * fib2);
+        y += p_fibers * kf * (0.025 * fib + dk * 0.02 * fib2);
         // Редкие выпадения: в среднем 1.5 на кадр, белые чёрточки 8–30 px.
         uint dh = ihash(uint(row) * 0x85EBCA6Bu ^ uint(uFrame) * 0xC2B2AE35u ^ 0x3B9AC9u);
         if (rnd(dh) < 1.5 / uResolution.y) {
@@ -330,7 +332,7 @@ void main() {
         vec2 cc = secamChroma(px, row) * p_saturation;
         cc *= 1.0 - 0.35 * smoothstep(0.6, 1.0, y);
         cc += dk * 0.03 * vec2(-0.6, -1.0) * (0.5 + 0.5 * fib2);   // тёмное поле: зеленоватый сдвиг цветности
-        if (p_fires > 0.0 || p_signal < 1.0) cc += flares(px, L);
+        if (p_fires > 0.0) cc += flares(px, L);
         // Обратное преобразование Y, Cb, Cr в RGB (Cb = 0.564(B-Y), Cr = 0.713(R-Y)).
         col = vec3(y + 1.402 * cc.y,
                    y - 0.344 * cc.x - 0.714 * cc.y,

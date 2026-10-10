@@ -42,10 +42,11 @@ public class TvFilterTests
     public void Params_NamesDefaultsAndOptions()
     {
         var ps = new TvFilter().Params;
-        Assert.Equal(new[] { "mode", "amount", "hue", "sharpness", "saturation", "fires", "fireSize", "signal", "edge", "bottles", "ghost", "ghostDelay" },
+        Assert.Equal(new[] { "mode", "amount", "hue", "sharpness", "saturation", "fires", "fireSize", "signal", "edge", "bottles", "ghost", "ghostDelay", "fibers" },
             ps.Select(p => p.Name).ToArray());
         Assert.Equal(0.25f, ps[10].Default);   // T5: двоение (эфир), по умолчанию 0.25
         Assert.Equal(0.02f, ps[11].Default);   // T5: сдвиг двоения, по умолчанию 0.02
+        Assert.Equal(1f, ps[12].Default);      // волокна: 1 = как на кассете
         Assert.Equal(0.5f, ps[8].Default);   // T4: edge = края гашения, по умолчанию 0.5
         Assert.Equal(0f, ps[9].Default);     // T4: бутылки сверху выключены по умолчанию
         Assert.Equal(1f, ps[6].Default);
@@ -525,7 +526,8 @@ public class TvFilterTests
         gpu.SetInput((x, y) => (0.5f, 0.5f, 0.5f));
         using var f = gpu.Create<TvFilter>();
 
-        var weak = gpu.Run(f, 0, Secam(signal: 0.3f));
+        // Пользователь: «даже на минимуме факелов их слишком много» — шум слабого сигнала тоже под ползунком «факелы».
+        var weak = gpu.Run(f, 0, Secam(signal: 0.3f, fires: 1f));
         int colored = 0, n = 0;
         for (int y = 8; y < H - 8; y++)
         for (int x = 200; x < 1700; x++)
@@ -751,6 +753,51 @@ public class TvFilterTests
         }
         double sAlong = along.Average(), sAcross = across.Average();
         Assert.True(sAlong < sAcross, $"шум вдоль строки {sAlong:F5}, поперёк {sAcross:F5}");
+    }
+
+    [Fact]
+    public void Secam_FiresZero_NoStreaksEvenOnWeakSignal()
+    {
+        // Пользователь: «даже на минимуме факелов их слишком много». fires=0 — штрихов нет совсем, при любом качестве приёма.
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (x / 64) % 2 == 0 ? (0.05f, 0.05f, 0.05f) : (0.9f, 0.9f, 0.9f));
+        using var f = gpu.Create<TvFilter>();
+        var img = gpu.Run(f, 3, Secam(signal: 0.3f, fires: 0f));
+        int longest = 0;
+        for (int y = 8; y < H - 8; y++)
+        {
+            int run = 0;
+            for (int x = 200; x < 1700; x++)
+            {
+                if (Chroma(img, x, y) > 0.08f) { run++; longest = Math.Max(longest, run); }
+                else run = 0;
+            }
+        }
+        Assert.True(longest < 8, $"при fires=0 и слабом сигнале есть цветной штрих {longest} px");
+    }
+
+    [Fact]
+    public void Secam_FibersZero_FlatFieldIsSmooth()
+    {
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0.3f, 0.5f, 0.3f));
+        using var f = gpu.Create<TvFilter>();
+        var on = gpu.Run(f, 5, new Dictionary<string, float>(Secam()) { ["fibers"] = 2f });
+        var off = gpu.Run(f, 5, new Dictionary<string, float>(Secam()) { ["fibers"] = 0f });
+        double RowSpread(float[,,] img)
+        {
+            var means = new List<double>();
+            for (int y = 8; y < H - 8; y++)
+            {
+                double s = 0;
+                for (int x = 200; x < 1700; x++) s += img[y, x, 1];
+                means.Add(s / 1500);
+            }
+            double m = means.Average();
+            return Math.Sqrt(means.Sum(v => (v - m) * (v - m)) / means.Count);
+        }
+        double sOn = RowSpread(on), sOff = RowSpread(off);
+        Assert.True(sOff < sOn * 0.25, $"волокна 0: разброс строк {sOff:F5}, волокна 2: {sOn:F5}");
     }
 
     [Fact]
