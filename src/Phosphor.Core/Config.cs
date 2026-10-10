@@ -14,6 +14,7 @@ public sealed class PhosphorConfig
     public ExitConfig Exit { get; set; } = new();
     public NetworkConfig Network { get; set; } = new();
     public OverlayConfig Overlay { get; set; } = new();
+    public DimmerConfig Dimmer { get; set; } = new();
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -118,6 +119,7 @@ public sealed class PhosphorConfig
       "overlay": { "enabled": true, "id": "hud", "probability": 0.4 },
       "audio": { "enabled": true, "sensitivity": 1.0, "maxPulse": 0.8, "minBeatIntervalMs": 250 },
       "network": { "enabled": true, "city": "Москва", "news": ["nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc"], "calmNews": true, "teletext": ["svt", "nos"], "satellite": ["meteosat", "himawari", "viirs"] },
+      "dimmer": { "enabled": false, "delayMin": 10, "fadeSec": 60, "hardware": true, "hardwareLevel": 0, "softwareLevel": 0.25 },
       "exit": { "mouseThresholdPx": 12 }
     }
     """;
@@ -129,6 +131,13 @@ public sealed class ScenesConfig
     public float Speed { get; set; } = 1f;
     public string Palette { get; set; } = "default";
     public JsonElement Params { get; set; } = SceneOptions.Empty;
+    /// <summary>Любимые сцены: выпадают чаще (вес Shuffle.FavoriteWeight). Учитываются, только если сцена включена.</summary>
+    public List<string> Favorites { get; set; } = new();
+    /// <summary>Только любимые (если среди включённых любимых нет — все включённые).</summary>
+    public bool FavoritesOnly { get; set; } = false;
+    /// <summary>Сцены, о которых конфиг уже «знает». Сцена из каталога, которой здесь нет, — новая из обновления:
+    /// включается сама и дописывается сюда. null (старый конфиг) — виденными считаются сцены из Enabled.</summary>
+    public List<string>? Seen { get; set; }
 }
 
 public sealed class FiltersConfig
@@ -136,6 +145,13 @@ public sealed class FiltersConfig
     public string Active { get; set; } = "clean";
     /// <summary>Имя пресета → JSON-массив стадий фильтров (формат см. FilterChain).</summary>
     public Dictionary<string, JsonElement> Presets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Пресеты, участвующие в переборе. null — все из Presets.</summary>
+    public List<string>? Enabled { get; set; }
+    /// <summary>Любимые пресеты: вес Shuffle.FavoriteWeight поверх «настроения» дирижёра.</summary>
+    public List<string> Favorites { get; set; } = new();
+    public bool FavoritesOnly { get; set; } = false;
+    /// <summary>Active = "shuffle": стартовый пресет случайный из доступных (это не ошибка конфига).</summary>
+    public const string ShuffleActive = "shuffle";
 }
 
 public sealed class ShuffleConfig
@@ -154,6 +170,8 @@ public sealed class ShuffleConfig
     public int PhraseBeats { get; set; } = 64;
     /// <summary>Полный рандом цепочки фильтров вместо пресетов (не рекомендуется).</summary>
     public bool RandomFilterChains { get; set; } = false;
+    /// <summary>Во сколько раз любимые сцены/пресеты выпадают чаще обычных (1..10).</summary>
+    public float FavoriteWeight { get; set; } = 3f;
 }
 
 public sealed class AudioConfig
@@ -194,6 +212,26 @@ public sealed class NetworkConfig
     public bool CalmNews { get; set; } = true;
     /// <summary>Дополнительные стоп-слова к встроенному списку (регистр не важен, совпадение по началу слова).</summary>
     public List<string> CalmExtraWords { get; set; } = new();
+}
+
+/// <summary>
+/// Диммер на время заставки: через DelayMin минут плавно (FadeSec) гасит мониторы.
+/// Мониторы с DDC/CI — подсветка до HardwareLevel; без DDC (или Hardware=false) — затемнение картинки до SoftwareLevel.
+/// При выходе яркость подсветки восстанавливается.
+/// </summary>
+public sealed class DimmerConfig
+{
+    public bool Enabled { get; set; } = false;
+    /// <summary>Через сколько минут работы заставки начинать гасить (0..240).</summary>
+    public float DelayMin { get; set; } = 10f;
+    /// <summary>Длительность плавного затемнения, с (0..600).</summary>
+    public float FadeSec { get; set; } = 60f;
+    /// <summary>Управлять подсветкой через DDC/CI там, где монитор отвечает.</summary>
+    public bool Hardware { get; set; } = true;
+    /// <summary>Целевая яркость подсветки, % диапазона монитора (0 — минимум монитора), 0..100.</summary>
+    public int HardwareLevel { get; set; } = 0;
+    /// <summary>Множитель яркости картинки для мониторов без DDC, 0..1 (0 — чёрный экран).</summary>
+    public float SoftwareLevel { get; set; } = 0.25f;
 }
 
 public sealed class ExitConfig
