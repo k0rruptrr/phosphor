@@ -93,6 +93,13 @@ $fontsDst = Join-Path $pkgDir 'fonts'
 New-Item -ItemType Directory -Path $fontsDst | Out-Null
 Copy-Item -Path (Join-Path $fontsSrc '*') -Destination $fontsDst -Recurse
 
+# Logo for the badge (BadgeLayer, source=phosphor): logo\phosphor.png next to the exe, same way as fonts\
+$logoSrc = Join-Path $phosDir 'logo'
+if (-not (Test-Path -LiteralPath $logoSrc -PathType Container)) { throw "logo folder not found: $logoSrc" }
+$logoDst = Join-Path $pkgDir 'logo'
+New-Item -ItemType Directory -Path $logoDst | Out-Null
+Copy-Item -Path (Join-Path $logoSrc '*') -Destination $logoDst -Recurse
+
 # Templates -> user-facing files. CRLF line endings. bat: UTF-8 without BOM (chcp 65001 inside). txt: UTF-8 with BOM (Notepad).
 function Write-Template([string]$src, [string]$dst, [bool]$withBom) {
     $text = [IO.File]::ReadAllText($src, [Text.Encoding]::UTF8)

@@ -322,4 +322,14 @@ public class LaunchArgsTests
     {
         Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "/s", "--overlay", "hud" }));
     }
+
+    [Theory]
+    [InlineData("clock")]
+    [InlineData("logo")]
+    public void Overlay_ParsesBadgeIds(string id)
+    {
+        Assert.Equal(id, LaunchArgs.Parse(new[] { "--shot", "a.png", "--overlay", id }).Overlay);
+        Assert.Equal(id, LaunchArgs.Parse(new[] { "/w", "--overlay", id.ToUpperInvariant() }).Overlay);
+        Assert.Equal(id, LaunchArgs.Parse(new[] { "/p", "12345", "--overlay", id }).Overlay);
+    }
 }

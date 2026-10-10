@@ -231,7 +231,7 @@ public class SettingsScreenOverlayTests
     {
         Assert.Equal("HUD-разметка", SettingsModel.OverlayTitle("hud"));
         Assert.Equal("OSD видика", SettingsModel.OverlayTitle("vcr"));
-        Assert.Equal(new[] { "hud", "vcr" }, SettingsModel.OverlayIds);
+        Assert.Equal(new[] { "hud", "vcr", "clock", "logo" }, SettingsModel.OverlayIds);
     }
 
     [Fact]

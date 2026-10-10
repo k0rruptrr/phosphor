@@ -59,6 +59,21 @@ internal static class Catalog
         return r;
     }
 
+    /// <summary>Бирки монитора (часы, логотип) из сборки Phosphor.Overlays.</summary>
+    public static IReadOnlyDictionary<string, Func<IBadge>> Badges()
+    {
+        var r = new Dictionary<string, Func<IBadge>>(StringComparer.OrdinalIgnoreCase);
+        Assembly asm;
+        try { asm = Assembly.Load("Phosphor.Overlays"); }
+        catch (Exception) { return r; }
+        foreach (var t in Discover<IBadge>(asm))
+        {
+            var id = ((IBadge)Activator.CreateInstance(t)!).Id;
+            r[id] = () => (IBadge)Activator.CreateInstance(t)!;
+        }
+        return r;
+    }
+
     private static IEnumerable<Type> Discover<T>(Assembly asm) =>
         asm.GetTypes()
            .Where(t => t.IsPublic && !t.IsAbstract && typeof(T).IsAssignableFrom(t) && t.GetConstructor(Type.EmptyTypes) is not null)

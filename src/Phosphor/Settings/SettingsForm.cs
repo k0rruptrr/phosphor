@@ -66,6 +66,8 @@ internal sealed class SettingsForm : Form
     private readonly Panel _screenRows = new();
     private readonly Panel _overlayRows = new();
     private readonly Button _overlayResetAll = new();
+    /// <summary>Строки вкладки «Оверлеи», которые активны не всегда (поля бирки при другом источнике): строка и условие.</summary>
+    private readonly List<(Control Row, Func<bool> Active)> _gates = new();
     private readonly RadioButton _screenCrt = new(), _screenFlat = new();
     private readonly Button _presetSaveAs = new(), _presetBuiltin = new(), _presetDelete = new();
     // Диммер
@@ -240,18 +242,19 @@ internal sealed class SettingsForm : Form
 
     private void BuildOverlaysPage(Panel p)
     {
-        _overlays.Location = new Point(12, 12);
-        _overlays.Size = new Size(568, 60);
+        // Четыре строки списка (HUD, OSD, часы, логотип) — видны все; ниже — параметры выбранной
+        _overlays.Location = new Point(12, 8);
+        _overlays.Size = new Size(568, 88);
         _overlays.Fill(SettingsModel.OverlayIds);
         _overlays.SelectId(_editOverlay ?? SettingsModel.OverlayIds[0]);
         p.Controls.Add(_overlays);
-        Place(p, Lbl("клик или Space: выкл → вкл. Ниже — параметры выбранной строки.", Theme.Muted), 12, 84);
-        _overlayRows.Location = new Point(0, 112);
-        _overlayRows.Size = new Size(600, 360);
+        Place(p, Lbl("клик или Space: выкл → вкл. Ниже — параметры выбранной строки.", Theme.Muted), 12, 100);
+        _overlayRows.Location = new Point(0, 118);
+        _overlayRows.Size = new Size(600, 368);
         _overlayRows.BackColor = Theme.Bg;
         p.Controls.Add(_overlayRows);
         _overlayResetAll.Text = "все по умолчанию";
-        _overlayResetAll.Location = new Point(12, 478);
+        _overlayResetAll.Location = new Point(12, 486);
         _overlayResetAll.Size = new Size(210, 26);
         _overlayResetAll.Click += (_, _) => OnResetAll();
         p.Controls.Add(_overlayResetAll);
@@ -798,6 +801,7 @@ internal sealed class SettingsForm : Form
     /// <summary>Геометрия строк: колонка под превью (ширина 464) или левая часть страницы (ширина 568).</summary>
     private void SetColumnGeometry(bool left)
     {
+        _leftColumn = left;
         if (left) { _valueX = 478; _resetX = 540; _controlEnd = 468; }
         else { _valueX = ValueX; _resetX = ResetX; _controlEnd = ControlEnd; }
     }
@@ -811,10 +815,10 @@ internal sealed class SettingsForm : Form
     }
 
     /// <summary>Строка в левой части: ширина 568, отступ 12, высота 28 (подзаголовок — 26).</summary>
-    private static void PlaceLeft(Control host, Control row, int y)
+    private static void PlaceLeft(Control host, Control row, int y, int height = 28)
     {
         row.Location = new Point(12, y);
-        row.Size = new Size(568, 28);
+        row.Size = new Size(568, height);
         row.BackColor = Theme.Bg;
         host.Controls.Add(row);
     }
@@ -865,31 +869,129 @@ internal sealed class SettingsForm : Form
         }
     }
 
+    /// <summary>Левая часть «Оверлеи»: шаг строки параметров (меньше 28, чтобы влезли бирки) и высота подсказки.</summary>
+    private const int OverlayRowStep = 27, OverlayNoteH = 18, OverlayHeadH = 22;
+    /// <summary>Колонка подписей «Оверлеи»: длинные описания бирок (до ~50 знаков) без «…»; поля уже, но не меньше 88 px.</summary>
+    private const int OverlayLabelCol = 380;
+    /// <summary>Правый край выпадающих списков в левой части (колонка значения 478..534).</summary>
+    private const int OverlayComboEnd = 534;
+    /// <summary>true — строки строятся в левой части страницы (оверлеи, экран): геометрия ComboSize.</summary>
+    private bool _leftColumn;
+
     private void RebuildOverlayRows()
     {
         ClearRows(_overlayRows);
+        _gates.Clear();
         string id = _editOverlay ?? SettingsModel.OverlayIds[0];
         bool hud = id == "hud";
         bool vcr = id == "vcr";
+        bool clock = id == "clock";
+        bool logo = id == "logo";
         var specs = _model.OverlaySpecs(id) ?? Array.Empty<SceneParamSpec>();
 
         var labels = new List<string>();
         if (hud) labels.Add("вероятность, %");
         labels.AddRange(specs.Select(s => LabelText(s.Name, s.Description)));
         if (vcr) labels.Add("шрифт OSD");
+        if (clock || logo) labels.Add("шрифт");
+        if (logo) { labels.Add("текст"); labels.Add("файл PNG"); }
         SetColumnGeometry(left: true);
-        _labelCol = LabelColumn(labels, LeftLabelCol);
+        _labelCol = LabelColumn(labels, OverlayLabelCol);
 
         int y = 0;
-        var head = HeaderRow($"Параметры оверлея «{SettingsModel.OverlayTitle(id)}»");
-        PlaceLeft(_overlayRows, head, y);
-        head.Size = new Size(568, 26);
-        y += 30;
-        if (hud) { PlaceLeft(_overlayRows, OverlayProbabilityRow(), y); y += 28; }
-        if (specs.Count == 0 && !vcr) { PlaceLeft(_overlayRows, NoteRow("у этого оверлея нет настроек"), y); y += 28; }
-        foreach (var spec in specs) { PlaceLeft(_overlayRows, OverlayParamRow(id, spec), y); y += 28; }
-        if (vcr) { PlaceLeft(_overlayRows, OsdFontRow(), y); y += 28; }
+        var head = HeaderRow($"Параметры «{SettingsModel.OverlayTitle(id)}»");
+        PlaceLeft(_overlayRows, head, y, OverlayHeadH);
+        y += OverlayHeadH + 2;
+        if (hud) { PlaceLeft(_overlayRows, OverlayProbabilityRow(), y); y += OverlayRowStep; }
+        if (specs.Count == 0 && !vcr) { PlaceLeft(_overlayRows, NoteRow("у этого оверлея нет настроек"), y); y += OverlayRowStep; }
+        foreach (var spec in specs) { PlaceLeft(_overlayRows, OverlayParamRow(id, spec), y); y += OverlayRowStep; }
+        if (vcr) { PlaceLeft(_overlayRows, OsdFontRow(), y); y += OverlayRowStep; }
+        if (clock) { PlaceLeft(_overlayRows, FontRow("clock", "шрифт", "шрифт для стиля «text»; «как у сетки» — шрифт сетки"), y); y += OverlayRowStep; }
+        if (logo)
+        {
+            // Порядок как в ТЗ: шрифт, текст, файл PNG и подсказка под ним. Неактивные поля — по источнику (source)
+            var font = FontRow("logo", "шрифт", "шрифт для источника «текст»; «как у сетки» — шрифт сетки");
+            PlaceLeft(_overlayRows, font, y); AddGate(font, () => _model.OverlayFieldActive("logo", "font")); y += OverlayRowStep;
+            var text = LogoTextRow();
+            PlaceLeft(_overlayRows, text, y); AddGate(text, () => _model.OverlayFieldActive("logo", "text")); y += OverlayRowStep;
+            var file = PngFileRow();
+            PlaceLeft(_overlayRows, file, y); AddGate(file, () => _model.OverlayFieldActive("logo", "file")); y += OverlayRowStep;
+            PlaceLeft(_overlayRows, NoteRow("PNG с прозрачностью; лучше белый или светлый"), y, OverlayNoteH);
+        }
         SetColumnGeometry(left: false);
+        UpdateOverlayGates();
+    }
+
+    /// <summary>Строка, которая активна только при условии (см. OverlayFieldActive): неактивная — приглушена и не нажимается.</summary>
+    private void AddGate(Control row, Func<bool> active) => _gates.Add((row, active));
+
+    /// <summary>Пересчитать активность строк-ворот по текущему конфигу (после правки источника и т.п.).</summary>
+    private void UpdateOverlayGates()
+    {
+        foreach (var (row, active) in _gates)
+        {
+            if (row.IsDisposed) continue;
+            bool on = active();
+            row.Enabled = on;
+            foreach (Control c in row.Controls)
+                if (c is Label l) l.ForeColor = on ? Theme.Text : Theme.Muted;
+        }
+    }
+
+    /// <summary>Строка «текст» бирки логотипа (logo.text): однострочное поле. Пусто — ключ удаляется; «PHOSPHOR» — умолчание, ключ тоже не нужен.</summary>
+    private Panel LogoTextRow()
+    {
+        const string def = SettingsModel.LogoDefaultText;
+        var (row, value, reset) = ParamRow("logo.text", "текст", $"текст логотипа для источника «текст»; по умолчанию {def}");
+        string cur = _model.OverlayString("logo", "text");
+        var box = new TextBox { Location = new Point(_labelCol, 3), Size = ControlSize(24) };
+        box.Text = cur.Length > 0 ? cur : def;
+        reset.Enabled = cur.Length > 0;
+        box.TextChanged += (_, _) =>
+        {
+            _model.SetOverlayString("logo", "text", box.Text == def ? "" : box.Text);
+            reset.Enabled = _model.OverlayString("logo", "text").Length > 0;
+            OnParamEdited();
+        };
+        reset.Click += (_, _) =>
+        {
+            _model.SetOverlayString("logo", "text", "");
+            box.Text = def;
+            reset.Enabled = false;
+            OnParamEdited();
+        };
+        row.Controls.Add(box);
+        FinishParamRow(row, value, reset, $"по умолчанию: {def}");
+        return row;
+    }
+
+    /// <summary>Строка «файл PNG» бирки логотипа (logo.file): путь и кнопка «…» (OpenFileDialog, *.png). Пусто — файла нет.</summary>
+    private Panel PngFileRow()
+    {
+        var (row, value, _) = ParamRow("logo.file", "файл PNG", "PNG для источника «файл»; путь пишется в overlay.params.logo.file", withReset: false);
+        // Поле пути до кнопки «…» (справа, в пределах строки 568)
+        const int browseX = 536;
+        var box = new TextBox { Location = new Point(_labelCol, 3), Size = new Size(Math.Max(60, browseX - 6 - _labelCol), 24) };
+        box.Text = _model.OverlayString("logo", "file");
+        var browse = new Button { Text = "…", Location = new Point(browseX, 2), Size = new Size(26, 24) };
+        box.TextChanged += (_, _) =>
+        {
+            _model.SetOverlayString("logo", "file", box.Text.Trim());
+            OnParamEdited();
+        };
+        browse.Click += (_, _) =>
+        {
+            using var dlg = new OpenFileDialog { Filter = "PNG (*.png)|*.png", Title = "PNG логотипа", CheckFileExists = true };
+            string cur = box.Text.Trim();
+            if (cur.Length > 0 && File.Exists(cur)) dlg.InitialDirectory = Path.GetDirectoryName(cur);
+            if (dlg.ShowDialog(this) == DialogResult.OK) box.Text = dlg.FileName; // TextChanged запишет путь
+        };
+        row.Controls.Add(box);
+        row.Controls.Add(browse);
+        Theme.Apply(row);
+        value.ForeColor = Theme.Muted;
+        _tip.SetToolTip(browse, "выбрать PNG");
+        return row;
     }
 
     private void BuildSceneRows()
@@ -1013,7 +1115,7 @@ internal sealed class SettingsForm : Form
     /// Строка: подпись text (обрезается с «…»; в подсказке — полное description и техническое имя), место под контрол
     /// (слева от значения, x = _labelCol), значение и кнопка «по умолчанию» справа.
     /// </summary>
-    private (Panel Row, Label Value, ResetButton Reset) ParamRow(string name, string text, string description)
+    private (Panel Row, Label Value, ResetButton Reset) ParamRow(string name, string text, string description, bool withReset = true)
     {
         var row = NewRow();
         string full = description.Trim();
@@ -1030,12 +1132,18 @@ internal sealed class SettingsForm : Form
         var reset = new ResetButton { Size = new Size(28, 22), Location = new Point(_resetX, 3) };
         row.Controls.Add(label);
         row.Controls.Add(value);
-        row.Controls.Add(reset);
+        if (withReset) row.Controls.Add(reset);
         return (row, value, reset);
     }
 
     /// <summary>Место под контрол параметра: от колонки подписей до колонки значения.</summary>
     private Size ControlSize(int height) => new(Math.Max(60, _controlEnd - _labelCol), height);
+
+    /// <summary>
+    /// Место под выпадающий список. В левой части у списка нет текста значения (колонка значения пуста),
+    /// поэтому он тянется до её правого края: «как у сетки» и имена шрифтов не обрезаются.
+    /// </summary>
+    private Size ComboSize(int height) => new(Math.Max(60, (_leftColumn ? OverlayComboEnd : _controlEnd) - _labelCol), height);
 
     private static string FormatNumber(double v, double min, double max, bool integer)
     {
@@ -1072,6 +1180,17 @@ internal sealed class SettingsForm : Form
         _labelCol = LabelColumn(new[] { LabelText(spec.Name, spec.Description) });
         return OverlayParamRow(overlayId, spec);
     }
+
+    /// <summary>Для тестов: все строки левой части «Оверлеи» для выбранной строки тем же путём, что у окна. Возвращает число контролов.</summary>
+    internal int ProbeOverlayRows(string overlayId)
+    {
+        _editOverlay = overlayId;
+        RebuildOverlayRows();
+        return _overlayRows.Controls.Count;
+    }
+
+    /// <summary>Для тестов: активность строк-ворот (после ProbeOverlayRows), в порядке построения.</summary>
+    internal IReadOnlyList<bool> ProbeOverlayGates() => _gates.Select(g => g.Row.Enabled).ToList();
 
     /// <summary>Для тестов: строка «вероятность, %» (HUD) и строка шрифта OSD (VCR) тем же путём, что у окна.</summary>
     internal Panel ProbeOverlayProbabilityRow()
@@ -1131,7 +1250,7 @@ internal sealed class SettingsForm : Form
                 reset.Enabled = Differs(v, spec.Default);
                 break;
             case SceneParamKind.Choice:
-                var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ControlSize(24) };
+                var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ComboSize(24) };
                 combo.Items.AddRange(spec.Options ?? Array.Empty<string>());
                 combo.SelectedIndex = Math.Clamp((int)Math.Round(v), 0, Math.Max(0, combo.Items.Count - 1));
                 combo.SelectedIndexChanged += (_, _) =>
@@ -1216,14 +1335,17 @@ internal sealed class SettingsForm : Form
     }
 
     /// <summary>Последняя строка OSD видика: шрифт (overlay.params.vcr.font). Первый пункт — «как у сетки» (пусто).</summary>
-    private Panel OsdFontRow()
+    private Panel OsdFontRow() => FontRow("vcr", "шрифт OSD", "шрифт OSD видика; «как у сетки» — шрифт сетки");
+
+    /// <summary>Строка шрифта оверлея или бирки (overlay.params.&lt;id&gt;.font): список шрифтов, первый пункт — «как у сетки» (пусто).</summary>
+    private Panel FontRow(string overlayId, string label, string description)
     {
-        var (row, value, reset) = ParamRow("vcr.font", "шрифт OSD", "шрифт OSD видика; «как у сетки» — шрифт сетки");
-        var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ControlSize(24) };
+        var (row, value, reset) = ParamRow($"{overlayId}.font", label, description);
+        var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ComboSize(24) };
         combo.Items.Add(new Choice("", "как у сетки"));
         foreach (var e in FontCatalog.List())
             combo.Items.Add(new Choice(e.Family, e.Builtin ? $"{e.Family} · встроенный" : e.Family));
-        string cur = _model.OverlayFont;
+        string cur = _model.OverlayString(overlayId, "font");
         int idx = cur.Length == 0 ? 0 : combo.Items.Cast<Choice>().ToList().FindIndex(ch => string.Equals(ch.Value, cur, StringComparison.OrdinalIgnoreCase));
         if (idx < 0)
         {
@@ -1234,17 +1356,17 @@ internal sealed class SettingsForm : Form
         combo.SelectedIndex = idx;
         value.Text = "";
 
-        void Refresh() => reset.Enabled = _model.OverlayFont.Length > 0;
+        void Refresh() => reset.Enabled = _model.OverlayString(overlayId, "font").Length > 0;
         combo.SelectedIndexChanged += (_, _) =>
         {
             if (combo.SelectedItem is not Choice ch) return;
-            _model.SetOverlayFont(ch.Value);
+            _model.SetOverlayString(overlayId, "font", ch.Value);
             Refresh();
             OnParamEdited();
         };
         reset.Click += (_, _) =>
         {
-            _model.SetOverlayFont("");
+            _model.SetOverlayString(overlayId, "font", "");
             combo.SelectedIndex = 0;
             Refresh();
             OnParamEdited();
@@ -1263,7 +1385,7 @@ internal sealed class SettingsForm : Form
         string def;
         if (spec.Options is { Length: > 0 } opts)
         {
-            var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ControlSize(24) };
+            var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ComboSize(24) };
             combo.Items.AddRange(opts);
             combo.SelectedIndex = Math.Clamp((int)Math.Round(v), 0, opts.Length - 1);
             combo.SelectedIndexChanged += (_, _) =>
@@ -1321,6 +1443,7 @@ internal sealed class SettingsForm : Form
     {
         _presets.Invalidate();
         if (_tabs.SelectedIndex == TabEffects) RefreshFilterTitle();
+        if (_tabs.SelectedIndex == TabOverlays) UpdateOverlayGates();
         UpdatePreview();
     }
 

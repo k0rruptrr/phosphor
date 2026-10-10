@@ -304,6 +304,10 @@ public sealed class OverlayConfig
     public double Probability { get; set; } = 0.4;
     /// <summary>OSD видика (VcrOverlay) поверх пресетов со стадией vhs. Не зависит от HUD.</summary>
     public bool Vcr { get; set; } = true;
+    /// <summary>Бирка «часы» на каждом мониторе (IBadge "clock"), параметры — overlay.params.clock.</summary>
+    public bool Clock { get; set; } = false;
+    /// <summary>Бирка «логотип» на каждом мониторе (IBadge "logo"), параметры — overlay.params.logo.</summary>
+    public bool Logo { get; set; } = false;
     /// <summary>Собственные параметры оверлеев: объект id → { имя: значение } (см. IOverlayParams). Нет поля — по умолчанию.</summary>
     public JsonElement Params { get; set; } = SceneOptions.Empty;
 

@@ -77,6 +77,22 @@ if (Test-Path -LiteralPath $fontsSrc -PathType Container) {
     Write-Host "WARNING: no fonts folder in $srcDir - built-in fonts not installed"
 }
 
+# Logo for the badge: the logo\ subfolder of the source (phosphor.png) goes to <install>\logo\
+$logoSrc = Join-Path $srcDir 'logo'
+if (Test-Path -LiteralPath $logoSrc -PathType Container) {
+    $logoDst = Join-Path $dstDir 'logo'
+    if ($PSCmdlet.ShouldProcess($logoDst, 'Create logo folder')) {
+        New-Item -ItemType Directory -Force -Path $logoDst | Out-Null
+    }
+    Get-ChildItem -LiteralPath $logoSrc -File | ForEach-Object {
+        if ($PSCmdlet.ShouldProcess((Join-Path $logoDst $_.Name), 'Copy logo file')) {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $logoDst $_.Name) -Force
+        }
+    }
+} else {
+    Write-Host "WARNING: no logo folder in $srcDir - badge logo not installed"
+}
+
 # 2. Save previous screensaver settings (only once, so re-install does not overwrite the backup)
 if (Test-Path -LiteralPath $prevFile) {
     Write-Host "Backup of previous settings already exists, keeping it: $prevFile"

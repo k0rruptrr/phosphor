@@ -28,7 +28,9 @@ internal static class Program
         // --overlay: hud — env PHOSPHOR_OVERLAY (его читают PickOverlay, Director и Shot); vcr — флаг видика (читает Shared)
         if (string.Equals(args.Overlay, "hud", StringComparison.Ordinal)) Environment.SetEnvironmentVariable("PHOSPHOR_OVERLAY", "hud");
         else if (string.Equals(args.Overlay, "vcr", StringComparison.Ordinal)) Environment.SetEnvironmentVariable("PHOSPHOR_VCR_FORCE", "1");
-        else if (args.Overlay is not null) log.Warn($"--overlay: неизвестный оверлей '{args.Overlay}' (есть: hud, vcr)");
+        // --overlay clock|logo — бирка включена принудительно (env PHOSPHOR_BADGE читает Shared)
+        else if (args.Overlay is "clock" or "logo") Environment.SetEnvironmentVariable("PHOSPHOR_BADGE", args.Overlay);
+        else if (args.Overlay is not null) log.Warn($"--overlay: неизвестный оверлей '{args.Overlay}' (есть: hud, vcr, clock, logo)");
 
         try
         {
@@ -106,7 +108,7 @@ internal static class Program
         data.RegisterLive("phosphor", () => phSnap is null ? null : (phSnap, phVer));
         var overlays = Catalog.Overlays();
         log.Info($"оверлеи: {(overlays.Count == 0 ? "нет" : string.Join(", ", overlays.Keys))}");
-        using var shared = new Shared(gl, config, Catalog.Scenes(), Catalog.Filters(), overlays, data, new Random(args.Seed ^ Environment.TickCount), log) { GridPasses = Catalog.GridPasses() };
+        using var shared = new Shared(gl, config, Catalog.Scenes(), Catalog.Filters(), overlays, data, new Random(args.Seed ^ Environment.TickCount), log) { GridPasses = Catalog.GridPasses(), Badges = Catalog.Badges() };
 
         var slots = BuildSlots(win, args, shared, cellH);
         // Шлейф (screen.trail): свой буфер на слот; при trail = 0 ничего не выделяется и не рисуется
@@ -215,6 +217,7 @@ internal static class Program
                 var s = slots[i];
                 trails[i].Resize(s.VpW, s.VpH);
                 outs[i] = trails[i].Apply(s.Output, config.Screen.Trail);
+                outs[i] = s.ComposeOver(outs[i], s.VpW, s.VpH);   // бирки «поверх» — после шлейфа, до корпуса
                 outs[i] = screens[i].Apply(outs[i], s.VpW, s.VpH, config.Screen);
                 presenter.Draw(outs[i], 0, s.VpX, s.VpY, s.VpW, s.VpH, gains[i]);
             }

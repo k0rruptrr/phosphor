@@ -34,7 +34,7 @@ internal static class Shot
         long phVer = 0;
         data.RegisterLive("phosphor", () => phSnap is null ? null : (phSnap, phVer));
         var overlays = Catalog.Overlays();
-        using var shared = new Shared(gl, config, scenes, Catalog.Filters(), overlays, data, new Random(args.Seed), log) { GridPasses = Catalog.GridPasses() };
+        using var shared = new Shared(gl, config, scenes, Catalog.Filters(), overlays, data, new Random(args.Seed), log) { GridPasses = Catalog.GridPasses(), Badges = Catalog.Badges() };
 
         string sceneId = args.Scene ?? scenes.Ids.First();
         // "shuffle" — стартовый пресет случайный из доступных (как в Program.BuildSlots); rng от seed — снимок детерминирован
@@ -123,6 +123,8 @@ internal static class Shot
             slot.Tick(dt, f * dt, f, audio, director.OrganismFor(0, clock), 1);
             outTex = trail.Apply(slot.Output, config.Screen.Trail);
         }
+        // Бирки «поверх» — после шлейфа, до корпуса (как в RunInteractive)
+        outTex = slot.ComposeOver(outTex, args.Width, args.Height);
         outTex = screenPass.Apply(outTex, args.Width, args.Height, config.Screen);
         gl.Finish();
         double ms = sw.Elapsed.TotalMilliseconds / Math.Max(1, args.Frames);

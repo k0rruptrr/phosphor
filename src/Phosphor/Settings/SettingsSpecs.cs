@@ -15,7 +15,7 @@ public sealed class SettingsSpecs
     /// <summary>Параметры сцены по id; null — сцена не реализует ISceneParams.</summary>
     public Func<string, IReadOnlyList<SceneParamSpec>?> Scene { get; }
 
-    /// <summary>Параметры оверлея по id (IOverlayParams.Params); null — оверлей не реализует IOverlayParams.</summary>
+    /// <summary>Параметры оверлея или бирки по id (IOverlayParams.Params); null — не реализует IOverlayParams.</summary>
     public Func<string, IReadOnlyList<SceneParamSpec>?> Overlay { get; }
 
     public SettingsSpecs(
@@ -34,6 +34,7 @@ public sealed class SettingsSpecs
         var filters = new Lazy<FilterRegistry>(() => Catalog.Filters());
         var scenes = new Lazy<SceneRegistry>(() => Catalog.Scenes());
         var overlays = new Lazy<IReadOnlyDictionary<string, Func<IOverlay>>>(() => Catalog.Overlays());
+        var badges = new Lazy<IReadOnlyDictionary<string, Func<IBadge>>>(() => Catalog.Badges());
         return new SettingsSpecs(
             id =>
             {
@@ -50,10 +51,20 @@ public sealed class SettingsSpecs
             },
             id =>
             {
-                if (!overlays.Value.TryGetValue(id, out var make)) return null;
-                var overlay = make();
-                try { return (overlay as IOverlayParams)?.Params; }
-                finally { (overlay as IDisposable)?.Dispose(); }
+                // Оверлеи и бирки (часы, логотип) ищутся в одном месте: оба реализуют IOverlayParams
+                if (overlays.Value.TryGetValue(id, out var make))
+                {
+                    var overlay = make();
+                    try { return (overlay as IOverlayParams)?.Params; }
+                    finally { (overlay as IDisposable)?.Dispose(); }
+                }
+                if (badges.Value.TryGetValue(id, out var makeBadge))
+                {
+                    var badge = makeBadge();
+                    try { return (badge as IOverlayParams)?.Params; }
+                    finally { (badge as IDisposable)?.Dispose(); }
+                }
+                return null;
             });
     }
 }

@@ -27,6 +27,10 @@ internal sealed class Shared(GL gl, PhosphorConfig config, SceneRegistry scenes,
     public Transition Transition { get; } = new(gl);
     /// <summary>Шаги обработки сетки (до GPU-фильтров), по id.</summary>
     public IReadOnlyDictionary<string, Func<IGridPass>> GridPasses { get; init; } = new Dictionary<string, Func<IGridPass>>();
+    /// <summary>Бирки монитора (часы, логотип) по id — из Catalog.Badges().</summary>
+    public IReadOnlyDictionary<string, Func<IBadge>> Badges { get; init; } = new Dictionary<string, Func<IBadge>>();
+    /// <summary>Бирка, включённая принудительно (--overlay clock|logo, env PHOSPHOR_BADGE). Задаётся хостом до создания слотов.</summary>
+    public string? ForcedBadge { get; } = Environment.GetEnvironmentVariable("PHOSPHOR_BADGE");
 
     private readonly Dictionary<(int Size, string Family), Font> _fonts = new();
 
@@ -86,6 +90,11 @@ internal sealed class MonitorSlot : IDisposable
     /// <summary>Видик монитора: одна лента на весь монитор, от старта заставки через все сцены. Null — если видика нет в конфиге.</summary>
     private readonly VcrOverlay? _vcr;
     private OsdLayer? _osd;
+    /// <summary>Бирки монитора (часы, логотип): создаются при старте слота, живут через все сцены.</summary>
+    private readonly List<BadgeLayer> _badges = new();
+    private readonly bool _hasOver;
+    private BadgeQuad? _quad;
+    private RenderTarget? _overRt;
     private TransitionKind _kind;
     private float _transT, _transDur;
 
@@ -114,6 +123,21 @@ internal sealed class MonitorSlot : IDisposable
             _osd = new OsdLayer(s, vpW, vpH);
             _vcr.Init(_osd.Cols, _osd.Rows, new Random(index));
         }
+
+        // Бирки: часы и логотип — по конфигу (overlay.clock / overlay.logo) или принудительно (--overlay clock|logo)
+        foreach (var (id, enabled) in new[] { ("clock", s.Config.Overlay.Clock), ("logo", s.Config.Overlay.Logo) })
+        {
+            bool forced = string.Equals(s.ForcedBadge, id, StringComparison.OrdinalIgnoreCase);
+            if (!enabled && !forced) continue;
+            if (!s.Badges.TryGetValue(id, out var makeBadge))
+            {
+                if (forced) s.Log.Warn($"бирка '{id}' не найдена (нет классов IBadge в Phosphor.Overlays)");
+                continue;
+            }
+            _badges.Add(new BadgeLayer(s, makeBadge(), index, vpW, vpH));
+        }
+        _hasOver = _badges.Any(b => b.Over);
+        if (_badges.Count > 0) _quad = new BadgeQuad(s.Gl);
     }
 
     /// <summary>Начать смену сцены. Cut — мгновенно. handoff — передать новой сцене последний кадр старой.</summary>
@@ -160,6 +184,7 @@ internal sealed class MonitorSlot : IDisposable
         VpX = vpX; VpY = vpY;
         if (vpW == VpW && vpH == VpH) return;
         VpW = vpW; VpH = vpH;
+        foreach (var b in _badges) b.Resize(vpW, vpH);
         FinishTransition();
         var id = _current.Scene.Id; var preset = _current.PresetName; var ov = _current.Overlay?.Id;
         _current.Dispose();
@@ -195,6 +220,9 @@ internal sealed class MonitorSlot : IDisposable
             }
         }
 
+        // Бирки «под эффектами» — на выход слоя до фильтров (VHS их рвёт); «поверх» — см. ComposeOver
+        if (_badges.Count > 0) TickBadges(dt, frame, audio, organism, monitorCount);
+
         _current.Filter(time, dt, frame, audio, organism);
         if (!InTransition)
         {
@@ -211,11 +239,44 @@ internal sealed class MonitorSlot : IDisposable
         if (_transT >= _transDur) FinishTransition();
     }
 
+    /// <summary>Шаг бирок: Update у каждой (один раз за кадр), затем «под эффектами» — на текущий слой и на входящий.</summary>
+    private void TickBadges(float dt, long frame, in AudioFrame audio, in Organism organism, int monitorCount)
+    {
+        _s.Data.TryGet("clock", out var clk, out _);
+        var ctx = new OverlayContext(_current.Scene.Id, _current.PresetName, Index, monitorCount, _s.Fps, frame,
+            (clk as ClockSnapshot)?.Local, audio, organism);
+        foreach (var b in _badges) b.Tick(dt, in ctx);
+
+        foreach (var b in _badges)
+            if (!b.Over) b.Compose(_current.Target, _quad!);
+        if (InTransition && _incoming is not null)
+            foreach (var b in _badges)
+                if (!b.Over) b.Compose(_incoming.Target, _quad!);
+    }
+
+    /// <summary>
+    /// Бирки «поверх» эффектов: копия tex с бирками сверху. Вызывается после шлейфа, до корпуса экрана.
+    /// Без таких бирок — tex как есть. Результат живёт до следующего вызова.
+    /// </summary>
+    public uint ComposeOver(uint tex, int w, int h)
+    {
+        if (!_hasOver || w <= 0 || h <= 0) return tex;
+        _overRt ??= new RenderTarget(_s.Gl, w, h);
+        _overRt.Resize(w, h);
+        _quad!.Draw(tex, _overRt, new BadgeRect(0, 0, w, h), 1f, blend: false);
+        foreach (var b in _badges)
+            if (b.Over) b.Compose(_overRt, _quad!);
+        return _overRt.Texture;
+    }
+
     public void Dispose()
     {
         _incoming?.Dispose();
         _current.Dispose();
         _composite?.Dispose();
         _osd?.Dispose();
+        foreach (var b in _badges) b.Dispose();
+        _quad?.Dispose();
+        _overRt?.Dispose();
     }
 }
