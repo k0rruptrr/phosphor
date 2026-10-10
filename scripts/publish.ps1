@@ -46,7 +46,7 @@ try {
 }
 
 & dotnet publish $proj -c Release -r win-x64 --self-contained $selfVal `
-    -p:AgentId=publish -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none `
+    -p:AgentId=publish -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=$selfVal -p:DebugType=none `
     @revArg -o $outDir
 if ($LASTEXITCODE -ne 0) { Write-Host "dotnet publish failed (exit $LASTEXITCODE)"; exit 1 }
 
