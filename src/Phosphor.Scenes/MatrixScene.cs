@@ -3,8 +3,17 @@ using Phosphor.Core;
 namespace Phosphor.Scenes;
 
 /// <summary>Классический цифровой дождь «Матрицы».</summary>
-public sealed class MatrixScene : IScene, IAudioReactive, IHandoffReceiver
+public sealed class MatrixScene : IScene, IAudioReactive, IHandoffReceiver, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec MinSpeedSpec = new("minSpeed", SceneParamKind.Float, 6f, 0f, 60f, "скорость падения: минимум");
+    public static readonly SceneParamSpec MaxSpeedSpec = new("maxSpeed", SceneParamKind.Float, 22f, 0f, 60f, "скорость падения: максимум");
+    public static readonly SceneParamSpec DensitySpec = new("density", SceneParamKind.Float, 0.6f, 0f, 1f, "плотность дождя");
+    public static readonly SceneParamSpec MutateRateSpec = new("mutateRate", SceneParamKind.Float, 1.5f, 0f, 10f, "частота смены символов");
+    private static readonly SceneParamSpec[] ParamList = { MinSpeedSpec, MaxSpeedSpec, DensitySpec, MutateRateSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
     private const int StreamsPerColumn = 2;
     private const int MinLen = 6;
     private const float GlitchDuration = 0.2f;
@@ -41,10 +50,10 @@ public sealed class MatrixScene : IScene, IAudioReactive, IHandoffReceiver
         _rows = rows;
         _rng = rng;
         _speedScale = MathF.Max(0f, options.Speed);
-        _minSpeed = MathF.Max(0f, options.GetFloat("minSpeed", 6f));
-        _maxSpeed = MathF.Max(_minSpeed, options.GetFloat("maxSpeed", 22f));
-        _density = Math.Clamp(options.GetFloat("density", 0.6f), 0f, 1f);
-        _mutateRate = MathF.Max(0f, options.GetFloat("mutateRate", 1.5f));
+        _minSpeed = Math.Clamp(options.GetFloat(MinSpeedSpec.Name, MinSpeedSpec.Default), MinSpeedSpec.Min, MinSpeedSpec.Max);
+        _maxSpeed = MathF.Max(_minSpeed, Math.Clamp(options.GetFloat(MaxSpeedSpec.Name, MaxSpeedSpec.Default), MaxSpeedSpec.Min, MaxSpeedSpec.Max));
+        _density = Math.Clamp(options.GetFloat(DensitySpec.Name, DensitySpec.Default), DensitySpec.Min, DensitySpec.Max);
+        _mutateRate = Math.Clamp(options.GetFloat(MutateRateSpec.Name, MutateRateSpec.Default), MutateRateSpec.Min, MutateRateSpec.Max);
         _audioMul = 1f;
         _kickLeft = 0f;
         _glitchTimer = 5f + rng.NextSingle() * 10f;

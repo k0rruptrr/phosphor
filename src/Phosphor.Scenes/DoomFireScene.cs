@@ -8,7 +8,7 @@ namespace Phosphor.Scenes;
 /// Высота пламени задаётся долей экрана ("height"), а не числом строк, поэтому картинка
 /// одинакова при любом разрешении. Вся случайность — только из rng, переданного в Init.
 /// </summary>
-public sealed class DoomFireScene : IScene, IAudioReactive
+public sealed class DoomFireScene : IScene, IAudioReactive, ISceneParams
 {
     private const int MaxIntensity = 36;
     private const int PaletteSize = 37;
@@ -53,6 +53,14 @@ public sealed class DoomFireScene : IScene, IAudioReactive
 
     public string Id => "doomfire";
 
+    // Параметры для окна настроек. Default — то же значение, что читает Init.
+    public static readonly SceneParamSpec StepsPerSec = new("stepsPerSec", SceneParamKind.Float, 40f, 0f, 200f, "скорость огня, шагов/с");
+    public static readonly SceneParamSpec Mode = new("mode", SceneParamKind.Choice, 0f, 0f, 1f, "вид: блоки или ASCII", new[] { "blocks", "ascii" });
+    public static readonly SceneParamSpec Height = new("height", SceneParamKind.Float, DefaultHeight, MinHeight, MaxHeight, "высота пламени, доля экрана");
+    private static readonly SceneParamSpec[] ParamList = { StepsPerSec, Mode, Height };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
     private int _cols, _rows, _fireH;
     private Random _rng = new(0);
     private byte[] _fire = Array.Empty<byte>();
@@ -90,10 +98,10 @@ public sealed class DoomFireScene : IScene, IAudioReactive
         _fireH = rows * 2;
         _rng = rng;
 
-        _stepRate = MathF.Max(0f, options.GetFloat("stepsPerSec", 40f)) * MathF.Max(0f, options.Speed);
-        _ascii = string.Equals(options.GetString("mode", "blocks"), "ascii", StringComparison.OrdinalIgnoreCase);
+        _stepRate = Math.Clamp(options.GetFloat(StepsPerSec.Name, StepsPerSec.Default), StepsPerSec.Min, StepsPerSec.Max) * MathF.Max(0f, options.Speed);
+        _ascii = string.Equals(options.GetString(Mode.Name, Mode.Options![(int)Mode.Default]), "ascii", StringComparison.OrdinalIgnoreCase);
 
-        _height = Math.Clamp(options.GetFloat("height", DefaultHeight), MinHeight, MaxHeight);
+        _height = Math.Clamp(options.GetFloat(Height.Name, Height.Default), Height.Min, Height.Max);
         _baseNeed = MaxIntensity / (_height * _fireH);
 
         string name = (options.Palette ?? "default").ToLowerInvariant();

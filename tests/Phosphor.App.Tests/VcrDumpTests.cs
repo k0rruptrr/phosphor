@@ -30,6 +30,7 @@ public class VcrDumpTests
         var v = new VcrOverlay();
         v.Init(cols, rows, new Random(1));
         v.Update(90 * 60f + 0.2f);               // половина ленты, двоеточие вкл.
+        v.SetOn(true);                           // видик включён — показ с этого момента
         v.Apply(g, new OverlayContext("plasma", "kassette", 0, 1, 59.9f, 0,
             new DateTime(2026, 10, 10, 14, 5, 0), AudioFrame.Silent, new Organism(0f, 0f, 0.7f, 0f)));
 

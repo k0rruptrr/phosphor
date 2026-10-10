@@ -11,6 +11,7 @@ uniform ivec2 uGridSize;   // (Cols, Rows)
 uniform ivec2 uCellSize;   // (CellWidth, CellHeight)
 uniform int uAtlasCols;
 uniform int uTargetHeight;
+uniform int uGlyphsOnly;   // 1: прозрачный режим (OSD) — только глифы, премножено; фон не рисуется
 
 void main() {
     // gl_FragCoord: начало снизу. Сетка — сверху.
@@ -18,7 +19,7 @@ void main() {
 
     ivec2 cell = px / uCellSize;
     if (px.x < 0 || px.y < 0 || cell.x >= uGridSize.x || cell.y >= uGridSize.y) {
-        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        fragColor = uGlyphsOnly != 0 ? vec4(0.0) : vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
 
@@ -30,6 +31,11 @@ void main() {
     float cov = texelFetch(uAtlas, atlasPx, 0).r;
 
     vec3 fg = texelFetch(uFg, cell, 0).rgb;
+
+    if (uGlyphsOnly != 0) {
+        fragColor = vec4(fg * cov, cov);
+        return;
+    }
     vec3 bg = texelFetch(uBg, cell, 0).rgb;
 
     fragColor = vec4(mix(bg, fg, cov), 1.0);

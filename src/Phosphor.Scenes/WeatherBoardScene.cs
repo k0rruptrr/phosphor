@@ -8,8 +8,17 @@ namespace Phosphor.Scenes;
 /// над каждой строкой пластинок — строка-«тень» из '▄'. Данные (погода, часы) приходят снимками от хоста;
 /// сцена сама не ходит в сеть и не читает реальное время, кроме снимка "clock".
 /// </summary>
-public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAudioReactive
+public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec TickerSpec = new("tickerSpeed", SceneParamKind.Float, 8f, 0f, 40f, "скорость бегущей строки");
+    public static readonly SceneParamSpec StepSpec = new("stepSec", SceneParamKind.Float, 0.03f, 0.01f, 0.2f, "шаг анимации табло, с");
+    private static readonly SceneParamSpec[] ParamList = { TickerSpec, StepSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _tickerSpeed, _stepSec;
+
     public string Id => "weatherboard";
     public int PreferredRows => 36;
 
@@ -18,10 +27,8 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
 
     /// <summary>Порядок символов при перелистывании (от текущего к целевому, по кругу).</summary>
     private const string Alphabet = " АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ0123456789+-°.:·ABCDEFGHIJKLMNOPQRSTUVWXYZ/";
-    private const float StepSec = 0.03f;
     private const int Margin = 2;
     private const int DayRows = 7;
-    private const float TickerSpeed = 8f;
     private const string NoCity = "───";
     private const string BlinkText = "ОЖИДАНИЕ ДАННЫХ";
     private const string NoLinkText = "НЕТ СВЯЗИ · OPEN-METEO";
@@ -70,6 +77,8 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _tickerSpeed = Math.Clamp(options.GetFloat(TickerSpec.Name, TickerSpec.Default), TickerSpec.Min, TickerSpec.Max);
+        _stepSec = Math.Clamp(options.GetFloat(StepSpec.Name, StepSpec.Default), StepSpec.Min, StepSpec.Max);
         _cols = cols;
         _rows = rows;
         _rng = rng;
@@ -172,7 +181,7 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
 
         _t = (_t + dt) % 1000f;
         _blinkOn = ((int)(_t / 0.5f) & 1) == 0;
-        if (_ticker.Length > 0) _tickerPos = (_tickerPos + dt * TickerSpeed) % _ticker.Length;
+        if (_ticker.Length > 0) _tickerPos = (_tickerPos + dt * _tickerSpeed) % _ticker.Length;
 
         // Раз в 45–90 с — волна по всему табло без смены значений.
         _waveLeft -= dt;
@@ -439,9 +448,9 @@ public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAud
         }
 
         _stepT[i] += left;
-        while (_stepT[i] >= StepSec && _steps[i] > 0)
+        while (_stepT[i] >= _stepSec && _steps[i] > 0)
         {
-            _stepT[i] -= StepSec;
+            _stepT[i] -= _stepSec;
             Step(i);
             // Пробел не целевой символ — пластинка его пролетает (волна и перелистывание), а не показывает.
             if (_steps[i] > 0 && _cur[i] == ' ' && _tgt[i] != ' ') Step(i);

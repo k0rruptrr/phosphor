@@ -8,8 +8,17 @@ namespace Phosphor.Scenes;
 /// Экран 40×25 — 1 символ = 1 ячейка, если сетка достаточна; иначе экран масштабируется по сетке.
 /// Со звуком: удар даёт вспышку полос в рамке; во время загрузки полосы синхронны с ударом.
 /// </summary>
-public sealed class C64LoadScene : IScene, IAudioReactive, IPreferredRows
+public sealed class C64LoadScene : IScene, IAudioReactive, IPreferredRows, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec TitleSpec = new("titleSeconds", SceneParamKind.Float, 10f, 2f, 60f, "титульник до цикла, с");
+    public static readonly SceneParamSpec LoadSpec = new("loadMin", SceneParamKind.Float, 8f, 2f, 30f, "загрузка: минимум, с");
+    private static readonly SceneParamSpec[] ParamList = { TitleSpec, LoadSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _titleTime, _loadMin;
+
     /// <summary>25 строк экрана плюс по 3 строки рамки сверху и снизу: экран занимает ~80% высоты.</summary>
     public int PreferredRows => 31;
 
@@ -22,9 +31,8 @@ public sealed class C64LoadScene : IScene, IAudioReactive, IPreferredRows
     private const float BootTime = 2f;      // с, экран включения
     private const float EnterTime = 0.5f;   // с, после Enter: SEARCHING FOR *
     private const float ReadyTime = 1f;     // с, READY. / RUN перед титульником
-    private const float TitleTime = 10f;    // с, титульник до цикла
     private const float FlashTime = 0.15f;  // с, вспышка полос после удара
-    private const float LoadMin = 8f, LoadRange = 7f;
+    private const float LoadRange = 7f;
     private const string Command = "LOAD\"*\",8,1";
     private const string Header0 = "    **** COMMODORE 64 BASIC V2 ****";
     private const string Header1 = " 64K RAM SYSTEM  38911 BASIC BYTES FREE";
@@ -69,6 +77,8 @@ public sealed class C64LoadScene : IScene, IAudioReactive, IPreferredRows
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _titleTime = Math.Clamp(options.GetFloat(TitleSpec.Name, TitleSpec.Default), TitleSpec.Min, TitleSpec.Max);
+        _loadMin = Math.Clamp(options.GetFloat(LoadSpec.Name, LoadSpec.Default), LoadSpec.Min, LoadSpec.Max);
         _rng = rng;
         _speed = MathF.Max(0f, options.Speed);
         _cols = cols;
@@ -155,7 +165,7 @@ public sealed class C64LoadScene : IScene, IAudioReactive, IPreferredRows
                 if (_stT >= ReadyTime) GoTo(St.Title);
                 break;
             case St.Title:
-                if (_stT >= TitleTime)
+                if (_stT >= _titleTime)
                 {
                     _game = (_game + 1) % Titles.Length;
                     GoTo(St.Boot);
@@ -176,7 +186,7 @@ public sealed class C64LoadScene : IScene, IAudioReactive, IPreferredRows
                 _keyT = KeyDelay();
                 break;
             case St.Loading:
-                _loadDur = LoadMin + _rng.NextSingle() * LoadRange;
+                _loadDur = _loadMin + _rng.NextSingle() * LoadRange;
                 _bandTicks = 0;
                 break;
         }

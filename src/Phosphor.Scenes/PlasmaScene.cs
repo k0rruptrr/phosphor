@@ -8,14 +8,21 @@ namespace Phosphor.Scenes;
 /// таблица всё время циклически сдвигается (palette cycling). Звук: удар — рывок сдвига палитры,
 /// бас — «дыхание» пространственной частоты, уровень — скорость.
 /// </summary>
-public sealed class PlasmaScene : IScene, IAudioReactive
+public sealed class PlasmaScene : IScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec CycleSpec = new("cycleStep", SceneParamKind.Float, 0.1f, 0f, 0.5f, "скорость анимации плазмы");
+    public static readonly SceneParamSpec IntervalSpec = new("paletteInterval", SceneParamKind.Float, 20f, 3f, 120f, "смена палитры, с");
+    private static readonly SceneParamSpec[] ParamList = { CycleSpec, IntervalSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _cycleStep, _paletteInterval;
+
     private const int PaletteCount = 4;
     private const int TableSize = 256;
     private const int SinSize = 1024;             // LUT синуса, степень двойки для быстрого &
-    private const float PaletteInterval = 20f;    // смена палитры, с
     private const float BlendTime = 2f;           // перекрёстный переход между таблицами, с
-    private const float CycleStep = 0.1f;         // базовый сдвиг таблицы за тик (≈5 индексов/с)
     private const float KickMin = 40f, KickMax = 60f;
     private const float KickDecay = 0.35f;        // доля рывка, сгорающая за тик (≈10 тиков ≈ 200 мс)
 
@@ -40,6 +47,8 @@ public sealed class PlasmaScene : IScene, IAudioReactive
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _cycleStep = Math.Clamp(options.GetFloat(CycleSpec.Name, CycleSpec.Default), CycleSpec.Min, CycleSpec.Max);
+        _paletteInterval = Math.Clamp(options.GetFloat(IntervalSpec.Name, IntervalSpec.Default), IntervalSpec.Min, IntervalSpec.Max);
         _rng = rng;
         _speed = MathF.Max(0f, options.Speed);
         _canvas = new RetroCanvas(cols, rows, CanvasMode.HalfBlock);
@@ -70,7 +79,7 @@ public sealed class PlasmaScene : IScene, IAudioReactive
 
         _palFrom = 0;
         _palTo = 0;
-        _palTimer = PaletteInterval;
+        _palTimer = _paletteInterval;
         _blend = 1f;
         _cycle = 0f;
         _kick = 0f;
@@ -103,7 +112,7 @@ public sealed class PlasmaScene : IScene, IAudioReactive
             _palFrom = _palTo;
             _palTo = (_palTo + 1) % PaletteCount;
             _blend = 0f;
-            _palTimer += PaletteInterval;
+            _palTimer += _paletteInterval;
         }
         _blend = MathF.Min(1f, _blend + dt / BlendTime);
 
@@ -111,7 +120,7 @@ public sealed class PlasmaScene : IScene, IAudioReactive
         for (int i = 0; i < ticks; i++)
         {
             float push = _kick * KickDecay;
-            _cycle = (_cycle + CycleStep + push) % TableSize;
+            _cycle = (_cycle + _cycleStep + push) % TableSize;
             _kick -= push;
         }
 

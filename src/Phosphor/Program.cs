@@ -30,7 +30,8 @@ internal static class Program
         {
             Dpi.EnsurePerMonitorAware();
             var warnings = new List<string>();
-            var cfgPath = Path.Combine(AppContext.BaseDirectory, "phosphor.json");
+            // --config <путь> — вместо phosphor.json рядом с exe (превью окна настроек передаёт свой временный конфиг)
+            var cfgPath = args.ConfigPath is { Length: > 0 } custom ? Path.GetFullPath(custom) : Path.Combine(AppContext.BaseDirectory, "phosphor.json");
             var config = PhosphorConfig.Load(cfgPath, warnings);
             foreach (var w in warnings) log.Warn(w);
 
@@ -99,6 +100,9 @@ internal static class Program
         using var shared = new Shared(gl, config, Catalog.Scenes(), Catalog.Filters(), overlays, data, new Random(args.Seed ^ Environment.TickCount), log) { GridPasses = Catalog.GridPasses() };
 
         var slots = BuildSlots(win, args, shared, cellH);
+        // Шлейф (screen.trail): свой буфер на слот; при trail = 0 ничего не выделяется и не рисуется
+        var trails = slots.Select(_ => new TrailBuffer(gl)).ToList();
+        var outs = new uint[slots.Count];
         // --scene / --preset в /w фиксируют сцену/пресет (разработка); в /s и /p дирижёр свободен.
         var director = new Director(shared, slots, lockScene: args.Scene is not null, lockPreset: args.Preset is not null);
 
@@ -198,7 +202,9 @@ internal static class Program
             for (int i = 0; i < slots.Count; i++)
             {
                 var s = slots[i];
-                presenter.Draw(s.Output, 0, s.VpX, s.VpY, s.VpW, s.VpH, gains[i]);
+                trails[i].Resize(s.VpW, s.VpH);
+                outs[i] = trails[i].Apply(s.Output, config.Screen.Trail);
+                presenter.Draw(outs[i], 0, s.VpX, s.VpY, s.VpW, s.VpH, gains[i]);
             }
             win.SwapBuffers();
             frame++;
@@ -214,6 +220,7 @@ internal static class Program
             }
         }
 
+        foreach (var t in trails) t.Dispose();
         foreach (var s in slots) s.Dispose();
         log.Info("выход");
         return 0;

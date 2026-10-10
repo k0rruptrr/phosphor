@@ -6,10 +6,19 @@ namespace Phosphor.Scenes;
 /// Звёздное поле: камера летит вперёд сквозь 3D-звёзды. Варп-прыжки с длинными шлейфами,
 /// туманности из value-noise (газ, не диски), реакция на звук (бас — скорость, удар — рывок).
 /// </summary>
-public sealed class StarfieldScene : IScene, IAudioReactive
+public sealed class StarfieldScene : IScene, IAudioReactive, ISceneParams
 {
     private const float DefaultDensity = 0.04f;
     private const float DefaultSpeed = 0.3f;
+
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec SpeedSpec = new("speed", SceneParamKind.Float, DefaultSpeed, 0f, 3f, "скорость полёта");
+    public static readonly SceneParamSpec DensitySpec = new("density", SceneParamKind.Float, DefaultDensity, 0f, 1f, "плотность звёзд");
+    public static readonly SceneParamSpec NebulaSpec = new("nebula", SceneParamKind.Bool, 1f, 0f, 1f, "туманности");
+    private static readonly SceneParamSpec[] ParamList = { SpeedSpec, DensitySpec, NebulaSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
     private const float MinZ = 0.02f;
     private const float BeatDuration = 0.4f;
     private const float BeatKick = 2f;            // при ударе скорость × (1 + 2) = ×3, затухает за BeatDuration
@@ -82,9 +91,9 @@ public sealed class StarfieldScene : IScene, IAudioReactive
         _projX = cols * 0.5f;
         _projY = cols * 0.5f * 0.55f;
         _speedScale = MathF.Max(0f, options.Speed);
-        _baseSpeed = MathF.Max(0f, options.GetFloat("speed", DefaultSpeed));
-        float density = Math.Clamp(options.GetFloat("density", DefaultDensity), 0f, 1f);
-        bool nebulaOn = options.GetBool("nebula", true);
+        _baseSpeed = Math.Clamp(options.GetFloat(SpeedSpec.Name, SpeedSpec.Default), SpeedSpec.Min, SpeedSpec.Max);
+        float density = Math.Clamp(options.GetFloat(DensitySpec.Name, DensitySpec.Default), DensitySpec.Min, DensitySpec.Max);
+        bool nebulaOn = options.GetBool(NebulaSpec.Name, NebulaSpec.Default > 0.5f);
         string palette = options.Palette.ToLowerInvariant();
         bool themed = palette is "green" or "amber" or "mono";
         bool rainbow = palette == "rainbow";

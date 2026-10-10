@@ -56,6 +56,10 @@ internal static class Shot
         string? overlay = Environment.GetEnvironmentVariable("PHOSPHOR_OVERLAY") is { Length: > 0 } ov ? ov : null;
         if (overlay is not null) log.Info(overlays.ContainsKey(overlay) ? $"shot: оверлей {overlay}" : $"shot: оверлей '{overlay}' не найден (есть: {string.Join(", ", overlays.Keys)})");
         using var slot = new MonitorSlot(shared, 0, 0, 0, args.Width, args.Height, sceneId, preset, config.CellHeightPx, overlay);
+        // Шлейф (screen.trail) копится по всем кадрам прогона — применяем на каждом кадре, как в RunInteractive
+        using var trail = new TrailBuffer(gl);
+        trail.Resize(args.Width, args.Height);
+        uint outTex = slot.Output;
         // Дирижёр зафиксирован (снимок детерминирован); смену можно вызвать на кадре N: env PHOSPHOR_SWITCH_AT/_TO/_KIND.
         // Синтетическая музыка (env PHOSPHOR_FAKE_BPM=120): ровный бит — для проверки реакции сцен и смен в такт.
         // С ней дирижёр сцену не фиксирует: смены по фразам должны идти, как под настоящую музыку.
@@ -100,12 +104,13 @@ internal static class Shot
                 phVer++;
             }
             slot.Tick(dt, f * dt, f, audio, director.OrganismFor(0, clock), 1);
+            outTex = trail.Apply(slot.Output, config.Screen.Trail);
         }
         gl.Finish();
         double ms = sw.Elapsed.TotalMilliseconds / Math.Max(1, args.Frames);
 
         using var final = new RenderTarget(gl, args.Width, args.Height);
-        presenter.Draw(slot.Output, final.Fbo, 0, 0, args.Width, args.Height, dimGain);
+        presenter.Draw(outTex, final.Fbo, 0, 0, args.Width, args.Height, dimGain);
 
         var px = new byte[args.Width * args.Height * 4];
         gl.BindFramebuffer(FramebufferTarget.Framebuffer, final.Fbo);

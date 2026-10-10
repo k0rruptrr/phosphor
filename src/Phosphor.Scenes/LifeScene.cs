@@ -7,9 +7,15 @@ namespace Phosphor.Scenes;
 /// экрана рисуется символом '▀' (верх — цвет клетки 2·row, низ — 2·row+1).
 /// Призраки погибших клеток затухают; при застое поле плавно перезапускается.
 /// </summary>
-public sealed class LifeScene : IScene, IAudioReactive, IHandoffReceiver
+public sealed class LifeScene : IScene, IAudioReactive, IHandoffReceiver, ISceneParams
 {
-    private const int BurstRadiusMin = 4;          // взрыв: кольцо радиусом 4..7
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec GenPerSecSpec = new("genPerSec", SceneParamKind.Float, 12f, 0f, 60f, "поколений в секунду");
+    private static readonly SceneParamSpec[] ParamList = { GenPerSecSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private const int BurstRadiusMin = 4;         // взрыв: кольцо радиусом 4..7
     private const int BurstRadiusRange = 4;
     private const int BurstThicknessMax = 2;       // толщина 1..2
     private const float BurstFill = 0.7f;          // доля клеток кольца, которые оживают (пропуски)
@@ -88,7 +94,7 @@ public sealed class LifeScene : IScene, IAudioReactive, IHandoffReceiver
         _w = cols;
         _h = rows * 2;
         _rng = rng;
-        _gensPerSec = MathF.Max(0f, options.GetFloat("genPerSec", 12f)) * MathF.Max(0f, options.Speed);
+        _gensPerSec = Math.Clamp(options.GetFloat(GenPerSecSpec.Name, GenPerSecSpec.Default), GenPerSecSpec.Min, GenPerSecSpec.Max) * MathF.Max(0f, options.Speed);
         _base = BaseColor(options.Palette);
         _newborn = Rgba.Lerp(Rgba.White, _base, 0.2f);
         _old = _base.Scale(0.6f);

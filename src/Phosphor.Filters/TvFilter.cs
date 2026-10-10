@@ -21,7 +21,7 @@ public sealed class TvFilter : ShaderFilter
         new ParamSpec("saturation", 0.6f, 0f, 1.5f, null, "SECAM: насыщенность декодированного цвета (пастель)"),
         new ParamSpec("fires", 0.5f, 0f, 1f, null, "SECAM: количество факелов (красно-розовых и бирюзовых штрихов)"),
         new ParamSpec("signal", 1f, 0f, 1f, null, "SECAM: качество приёма, 1 = идеально, ниже = снег и факелы от шума"),
-        new ParamSpec("edge", 0.35f, 0f, 1f, null, "SECAM: зелёная кромка у левого края (демодулятор с площадки гашения)"),
+        new ParamSpec("edge", 0.35f, 0f, 1f, null, "Сигналы опознавания (бутылки) сверху кадра"),
     };
 
     private const string EncodeResource = "Phosphor.Filters.Shaders.tv_encode.frag";

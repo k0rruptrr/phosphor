@@ -273,11 +273,13 @@ public class TvFilterTests
     [Fact]
     public void Secam_FireStreaksOnlyOnColorEdge()
     {
+        // Полоса сигналов опознавания проверяется в Secam_EdgeBand_GreenStripeAtTopEdge; здесь выключена, чтобы мерить только факелы.
+        var noBand = new Dictionary<string, float>(Mode(ModeSecam)) { ["edge"] = 0f };
         using var gpu = new GpuHarness(W, H);
         int edge = W / 2;
         gpu.SetInput((x, y) => x < edge ? (1f, 0f, 0f) : (0.5f, 0.5f, 0.5f));
         using var f = gpu.Create<TvFilter>();
-        var img = gpu.Run(f, 0, Mode(ModeSecam));
+        var img = gpu.Run(f, 0, noBand);
         int longest = 0;
         for (int y = 0; y < H; y++)
         {
@@ -293,7 +295,7 @@ public class TvFilterTests
         Assert.True(longest > 8, $"самый длинный цветной отрезок {longest}");
 
         gpu.SetInput((x, y) => (0.5f, 0.5f, 0.5f));
-        var g = gpu.Run(f, 0, Mode(ModeSecam));
+        var g = gpu.Run(f, 0, noBand);
         int grayRun = 0;
         for (int y = 0; y < H; y++)
         {
@@ -570,30 +572,44 @@ public class TvFilterTests
         0.5f * (Diff(img, x, 2 * line) + Diff(img, x, 2 * line + 1));
 
     [Fact]
-    public void Secam_EdgeBand_GreenAtLeftEdge()
+    public void Secam_EdgeBand_GreenStripeAtTopEdge()
     {
-        using var gpu = new GpuHarness(W, H);
+        // ИЗМЕНЕНИЕ ТРЕБОВАНИЯ (T2): зелёная полоса перенесена с левого края на ВЕРХНИЙ край кадра
+        // (сигналы опознавания, «бутылки», из кадрового гасящего импульса). Прежний тест
+        // Secam_EdgeBand_GreenAtLeftEdge (вертикальная кромка слева) удалён как отражающий старое требование.
+        // Полоса 1.4% высоты: на общем харнессе H = 64 это меньше строки, поэтому тест берёт кадр 1920x1080.
+        const int HB = 1080;
+        using var gpu = new GpuHarness(W, HB);
         gpu.SetInput((x, y) => (0f, 0f, 0f));
         using var f = gpu.Create<TvFilter>();
-        int band = (int)(0.008 * W);
+        int bandRows = (int)(0.014 * HB);
 
-        float[] MeanRgb(float[,,] img)
+        float[] MeanRgb(float[,,] img, int y0, int y1, int x0, int x1)
         {
             var m = new float[3];
             int n = 0;
-            for (int y = 8; y < H - 8; y++)
-            for (int x = 0; x < band; x++)
+            for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
             {
                 m[0] += img[y, x, 0]; m[1] += img[y, x, 1]; m[2] += img[y, x, 2]; n++;
             }
             return new[] { m[0] / n, m[1] / n, m[2] / n };
         }
 
-        var on = MeanRgb(gpu.Run(f, 0, Secam(edge: 1f)));
-        Assert.True(on[1] - MathF.Max(on[0], on[2]) >= 0.05f, $"G {on[1]:F3}, R {on[0]:F3}, B {on[2]:F3}");
+        // Полоса: верхние 1.4% высоты кадра (строка 0 — верх).
+        var on = gpu.Run(f, 0, Secam(edge: 1f));
+        var top = MeanRgb(on, 0, bandRows, 0, W);
+        Assert.True(top[1] - MathF.Max(top[0], top[2]) >= 0.05f,
+            $"полоса сверху: G {top[1]:F3}, R {top[0]:F3}, B {top[2]:F3}");
 
-        var off = MeanRgb(gpu.Run(f, 0, Secam(edge: 0f)));
-        Assert.True(off[1] - MathF.Max(off[0], off[2]) < 0.02f, $"без кромки G {off[1]:F3}");
+        // Левый край ниже полосы: зелёного нет (вертикальной кромки больше нет).
+        var left = MeanRgb(on, HB / 10, HB * 9 / 10, 0, (int)(0.01 * W));
+        Assert.True(left[1] - MathF.Max(left[0], left[2]) < 0.02f,
+            $"слева под полосой G {left[1]:F3}, R {left[0]:F3}, B {left[2]:F3}");
+
+        // edge=0: полосы нет.
+        var off = MeanRgb(gpu.Run(f, 0, Secam(edge: 0f)), 0, bandRows, 0, W);
+        Assert.True(off[1] - MathF.Max(off[0], off[2]) < 0.02f, $"без полосы G {off[1]:F3}");
     }
 
     [Fact]

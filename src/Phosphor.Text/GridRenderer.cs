@@ -17,6 +17,7 @@ public sealed unsafe class GridRenderer : IDisposable
     private readonly int _locCellSize;
     private readonly int _locAtlasCols;
     private readonly int _locTargetHeight;
+    private readonly int _locGlyphsOnly;
 
     private uint _fgTex, _bgTex, _glyphTex;
     private int _cols = -1, _rows = -1;
@@ -41,11 +42,20 @@ public sealed unsafe class GridRenderer : IDisposable
         _locCellSize = gl.GetUniformLocation(_program, "uCellSize");
         _locAtlasCols = gl.GetUniformLocation(_program, "uAtlasCols");
         _locTargetHeight = gl.GetUniformLocation(_program, "uTargetHeight");
+        _locGlyphsOnly = gl.GetUniformLocation(_program, "uGlyphsOnly");
         gl.UseProgram(0);
     }
 
     /// <summary>Нарисовать сетку в target (левый верхний угол). Остаток target — чёрный.</summary>
-    public void Render(CharGrid grid, RenderTarget target)
+    public void Render(CharGrid grid, RenderTarget target) => Draw(grid, target, glyphsOnly: false);
+
+    /// <summary>
+    /// Прозрачный режим (для OSD): в target только глифы, premultiplied — rgb = Fg·покрытие, альфа = покрытие.
+    /// Фон клеток (Bg) не используется, пустые клетки и остаток target — полностью прозрачны.
+    /// </summary>
+    public void RenderGlyphs(CharGrid grid, RenderTarget target) => Draw(grid, target, glyphsOnly: true);
+
+    private void Draw(CharGrid grid, RenderTarget target, bool glyphsOnly)
     {
         EnsureTextures(grid.Cols, grid.Rows);
         FillBuffers(grid);
@@ -64,6 +74,7 @@ public sealed unsafe class GridRenderer : IDisposable
         _gl.Uniform2(_locCellSize, _atlas.CellWidth, _atlas.CellHeight);
         _gl.Uniform1(_locAtlasCols, _atlas.AtlasCols);
         _gl.Uniform1(_locTargetHeight, target.Height);
+        _gl.Uniform1(_locGlyphsOnly, glyphsOnly ? 1 : 0);
 
         GlUtil.DrawFullscreen(_gl);
 

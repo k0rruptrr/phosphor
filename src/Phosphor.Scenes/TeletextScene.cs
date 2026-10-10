@@ -6,14 +6,21 @@ namespace Phosphor.Scenes;
 /// Телетекст: страницы европейских каналов (NOS, SVT...) с переключением как на старом телевизоре.
 /// Данные приходят от хоста ("teletext", "clock"); без данных рисуется процедурная заглушка.
 /// </summary>
-public sealed class TeletextScene : IScene, IDataScene, IPreferredRows
+public sealed class TeletextScene : IScene, IDataScene, IPreferredRows, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec SearchSpec = new("searchTime", SceneParamKind.Float, 1.2f, 0f, 5f, "поиск страницы, с");
+    public static readonly SceneParamSpec HoldSpec = new("holdMin", SceneParamKind.Float, 12f, 2f, 60f, "пауза страницы: минимум, с");
+    private static readonly SceneParamSpec[] ParamList = { SearchSpec, HoldSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _searchTime, _minHold;
+
     private const int PageCols = 40;
     private const int PageRows = 25;
-    private const float SearchTime = 1.2f;
     private const float WipeTime = 0.4f;
     private const float CounterStep = 0.05f;
-    private const float MinHold = 12f;
     private const float HoldRange = 8f;
 
     private static readonly Rgba Dim = new(110, 110, 110);
@@ -40,6 +47,8 @@ public sealed class TeletextScene : IScene, IDataScene, IPreferredRows
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _searchTime = Math.Clamp(options.GetFloat(SearchSpec.Name, SearchSpec.Default), SearchSpec.Min, SearchSpec.Max);
+        _minHold = Math.Clamp(options.GetFloat(HoldSpec.Name, HoldSpec.Default), HoldSpec.Min, HoldSpec.Max);
         _rng = rng;
         _time = 0f;
         _pages = Array.Empty<TeletextPage>();
@@ -91,7 +100,7 @@ public sealed class TeletextScene : IScene, IDataScene, IPreferredRows
                 break;
             case 1:
                 _phaseT += dt;
-                if (_phaseT >= SearchTime)
+                if (_phaseT >= _searchTime)
                 {
                     _phase = 2;
                     _phaseT = 0f;
@@ -148,7 +157,7 @@ public sealed class TeletextScene : IScene, IDataScene, IPreferredRows
         if (framed) DrawFrame(grid, ox, oy, p.Page, p.SubPage, _pos + 1, n, cur);
     }
 
-    private float NextHold() => MinHold + _rng.NextSingle() * HoldRange;
+    private float NextHold() => _minHold + _rng.NextSingle() * HoldRange;
 
     private void SetPages(IReadOnlyList<TeletextPage> list)
     {

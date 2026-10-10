@@ -7,8 +7,17 @@ namespace Phosphor.Scenes;
 /// Хищник раскалывает стаю; рамка захвата отмечает крупнейшую группу.
 /// Мир хранится в «квадратных» единицах: x — в ячейках, y — в ячейках * YScale.
 /// </summary>
-public sealed class BoidsScene : IScene, IAudioReactive, IHandoffReceiver
+public sealed class BoidsScene : IScene, IAudioReactive, IHandoffReceiver, ISceneParams
 {
+    // Стая: множитель от автоматического размера (авто = clamp(площадь/60, 40, MaxAgents)).
+    public static readonly SceneParamSpec DensitySpec = new("density", SceneParamKind.Float, 1f, 0.25f, 4f, "стая: × от авто-размера");
+    private static readonly SceneParamSpec[] ParamList = { DensitySpec };
+
+    /// <summary>Старый абсолютный ключ "count": если задан в конфиге, имеет приоритет над множителем. В Params не показывается.</summary>
+    private const string LegacyCountKey = "count";
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
     private const float YScale = 1.8f;              // высота ячейки в квадратных единицах
     private const float ViewRadius = 8f;
     private const float ViewR2 = ViewRadius * ViewRadius;
@@ -23,7 +32,8 @@ public sealed class BoidsScene : IScene, IAudioReactive, IHandoffReceiver
     private const float FrameSmooth = 0.2f, CaptureTime = 0.3f, CaptureMargin = 6f;
     private const float TailPeriod = 0.1f;
     private const float BurstTime = 0.2f, BurstMul = 1.6f;
-    private const int MaxAgents = 300;
+    private const int AutoMaxAgents = 300;   // верхняя граница автоматического размера стаи
+    private const int MaxAgents = 600;       // потолок с учётом множителя density
 
     private static readonly Rgba Orange = Rgba.Hex(0xFF6600);
     private static readonly Rgba PredRed = Rgba.Hex(0xFF3030);
@@ -129,8 +139,14 @@ public sealed class BoidsScene : IScene, IAudioReactive, IHandoffReceiver
         bool knownPalette = pal is "amber" or "mono" or "green" or "rainbow";
         _predColor = knownPalette ? Palettes.Head(options.Palette, _base) : PredRed;
 
-        int defN = Math.Clamp(cols * rows / 60, 40, MaxAgents);
-        _n = Math.Clamp(options.GetInt("count", defN), 1, MaxAgents);
+        int legacy = options.GetInt(LegacyCountKey, -1);
+        if (legacy >= 0) _n = Math.Clamp(legacy, 1, MaxAgents);
+        else
+        {
+            int defN = Math.Clamp(cols * rows / 60, 40, AutoMaxAgents);
+            float dens = Math.Clamp(options.GetFloat(DensitySpec.Name, DensitySpec.Default), DensitySpec.Min, DensitySpec.Max);
+            _n = Math.Clamp((int)MathF.Round(defN * dens), 1, MaxAgents);
+        }
 
         _px = new float[_n]; _py = new float[_n];
         _vx = new float[_n]; _vy = new float[_n];

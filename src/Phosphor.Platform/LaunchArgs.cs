@@ -23,6 +23,7 @@ public sealed class LaunchArgs
     public int Width { get; init; } = 1280;    // --size WxH
     public int Height { get; init; } = 720;
     public int Seed { get; init; } = 1;        // --seed N
+    public string? ConfigPath { get; init; }   // --config <путь>, для всех режимов: вместо phosphor.json рядом с exe
 
     /// <summary>
     /// Разбор аргументов. Регистр флагов не важен. Ошибки — ArgumentException с текстом на русском.
@@ -46,6 +47,7 @@ public sealed class LaunchArgs
         int height = 720;
         int seed = 1;
         string? tab = null;
+        string? configPath = null;
         var seenOptions = new HashSet<string>(StringComparer.Ordinal);
 
         void SetMode(LaunchMode m)
@@ -148,6 +150,11 @@ public sealed class LaunchArgs
                     seed = ParseInt(NextValue("--seed"), "--seed");
                     break;
 
+                case "--config":
+                    Option("--config");
+                    configPath = NextValue("--config");
+                    break;
+
                 default:
                     if (lower.StartsWith("/p:", StringComparison.Ordinal))
                     {
@@ -193,17 +200,22 @@ public sealed class LaunchArgs
             Width = width,
             Height = height,
             Seed = seed,
+            ConfigPath = configPath,
         };
     }
 
-    /// <summary>Какие опции допустимы в каком режиме.</summary>
-    private static bool OptionAllowed(LaunchMode mode, string opt) => mode switch
+    /// <summary>Какие опции допустимы в каком режиме. --config допустим везде.</summary>
+    private static bool OptionAllowed(LaunchMode mode, string opt)
     {
-        LaunchMode.Windowed or LaunchMode.Shot => opt is "--scene" or "--preset" or "--frames" or "--size" or "--seed",
-        LaunchMode.Preview => opt is "--scene" or "--preset",
-        LaunchMode.SettingsShot => opt is "--tab",
-        _ => false,
-    };
+        if (opt is "--config") return true;
+        return mode switch
+        {
+            LaunchMode.Windowed or LaunchMode.Shot => opt is "--scene" or "--preset" or "--frames" or "--size" or "--seed",
+            LaunchMode.Preview => opt is "--scene" or "--preset",
+            LaunchMode.SettingsShot => opt is "--tab",
+            _ => false,
+        };
+    }
 
     private static bool TryParseHwnd(string text, out nint hwnd)
     {

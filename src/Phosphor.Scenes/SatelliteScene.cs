@@ -10,15 +10,22 @@ namespace Phosphor.Scenes;
 /// и при новом кадре. Ночью (тёмный кадр или 21–6 по часам) — янтарный ИК. Данные — снимки хоста ("satellite",
 /// "clock"); без данных — процедурный шар с «НЕТ СИГНАЛА».
 /// </summary>
-public sealed class SatelliteScene : IScene, IDataScene, IAudioReactive
+public sealed class SatelliteScene : IScene, IDataScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec FrameSpec = new("frameStep", SceneParamKind.Float, 0.6f, 0.1f, 3f, "с на кадр таймлапса");
+    public static readonly SceneParamSpec HoldSpec = new("holdSec", SceneParamKind.Float, 2f, 0f, 10f, "пауза на последнем кадре, с");
+    private static readonly SceneParamSpec[] ParamList = { FrameSpec, HoldSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _frameStep, _holdSec;
+
     public string Id => "satellite";
 
     private static readonly string[] Keys = { "satellite", "clock" };
     public IReadOnlyList<string> DataKeys => Keys;
 
-    private const float FrameStep = 0.6f;     // с на кадр таймлапса
-    private const float HoldSec = 2f;         // пауза на последнем кадре
     private const float RecSec = 3f;          // длительность приёма
     private const int MinTimelapse = 3;       // кадров меньше — статично
     private const float DimLuma = 40f / 255f; // средняя яркость кадра ниже — ночь
@@ -72,6 +79,8 @@ public sealed class SatelliteScene : IScene, IDataScene, IAudioReactive
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _frameStep = Math.Clamp(options.GetFloat(FrameSpec.Name, FrameSpec.Default), FrameSpec.Min, FrameSpec.Max);
+        _holdSec = Math.Clamp(options.GetFloat(HoldSpec.Name, HoldSpec.Default), HoldSpec.Min, HoldSpec.Max);
         _cols = cols;
         _rows = rows;
         _rng = rng;
@@ -279,15 +288,15 @@ public sealed class SatelliteScene : IScene, IDataScene, IAudioReactive
         if (n == 0) { _curA = _curB = -1; _curF = 0; return; }
         if (_static) { _curA = _curB = n - 1; _curF = 0; return; }
 
-        double seg = (n - 1) * FrameStep;
-        double period = seg + HoldSec;
+        double seg = (n - 1) * _frameStep;
+        double period = seg + _holdSec;
         double tau = _t % period;
         if (tau < seg)
         {
-            int i = Math.Min((int)(tau / FrameStep), n - 2);
+            int i = Math.Min((int)(tau / _frameStep), n - 2);
             _curA = i;
             _curB = i + 1;
-            _curF = (float)Math.Clamp((tau - i * FrameStep) / FrameStep, 0.0, 1.0);
+            _curF = (float)Math.Clamp((tau - i * _frameStep) / _frameStep, 0.0, 1.0);
         }
         else
         {

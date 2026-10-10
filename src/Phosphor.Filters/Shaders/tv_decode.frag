@@ -21,7 +21,7 @@ uniform float p_sharpness;
 uniform float p_saturation;   // SECAM: насыщенность цвета
 uniform float p_fires;        // SECAM: количество факелов
 uniform float p_signal;       // SECAM: качество приёма (снег яркости, факелы от шума)
-uniform float p_edge;         // SECAM: зелёная кромка у левого края
+uniform float p_edge;         // SECAM: сигналы опознавания (полоса) сверху кадра
 
 const float PI = 3.1415927;
 const float TAU = 6.2831853;
@@ -260,9 +260,16 @@ void main() {
         col = vec3(y + 1.402 * cc.y,
                    y - 0.344 * cc.x - 0.714 * cc.y,
                    y + 1.772 * cc.x);
-        // Зелёная кромка у левого края: демодулятор раскачивается с площадки гашения; дышит с периодом ~7 с.
-        float bell = 1.0 - smoothstep(0.004 * W, 0.012 * W, x);
-        col.g += p_edge * 0.5 * bell * (1.0 + 0.2 * sin(TAU * uTime / 7.0));
+        // Сигналы опознавания (бутылки) сверху кадра: полоса высотой 1.4% кадра, нижний край размыт на 3.5 px (на 1080),
+        // полоса дышит с периодом ~7 с и дрожит по высоте на 1–2 px. Строки чередуются: Db чуть голубее, Dr чуть желтее.
+        float yTop = (1.0 - vUv.y) * uResolution.y;
+        float sy = uResolution.y / 1080.0;
+        float bandH = 0.014 * uResolution.y + 1.5 * sy * smoothNoise(uTime * 0.5);
+        float bandMask = 1.0 - smoothstep(bandH - 3.5 * sy, bandH, yTop);
+        float breath = 1.0 + 0.2 * sin(TAU * uTime / 7.0);
+        float bandAmt = p_edge * 0.5 * breath * bandMask;
+        bool bandDb = (row & 1) == 0;
+        col += bandAmt * (bandDb ? vec3(0.0, 1.0, 0.35) : vec3(0.35, 1.0, 0.0));
     }
 
     col = max(col, vec3(0.0));

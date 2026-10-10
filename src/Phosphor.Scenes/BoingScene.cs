@@ -7,16 +7,21 @@ namespace Phosphor.Scenes;
 /// Холст HalfBlock, логика на RetroClock(50). При музыке удар об пол совпадает с ударом: фаза подтягивается
 /// плавно (через скорость, без телепортации), бас сплющивает шар при касании.
 /// </summary>
-public sealed class BoingScene : IScene, IAudioReactive
+public sealed class BoingScene : IScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec PeakSpec = new("peak", SceneParamKind.Float, 0.30f, 0.10f, 0.45f, "высота прыжка, доля холста");
+    public static readonly SceneParamSpec SpinSpec = new("spin", SceneParamKind.Float, 2.6f, 0f, 8f, "скорость вращения, рад/с");
+    private static readonly SceneParamSpec[] ParamList = { PeakSpec, SpinSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
     private const float Hz = 50f;
     private const float TickDt = 1f / 50f;
     private const float BaseHop = 1f;          // с, период прыжка без музыки
-    private const float PeakFrac = 0.30f;     // высота прыжка / высота холста
     private const float RadiusFrac = 0.20f;   // радиус / высота холста: диаметр ~40%
     private const float FloorFrac = 0.8f;     // строка пола / высота холста (пол — нижние ~20%)
     private const float TiltRad = 20f * MathF.PI / 180f;
-    private const float SpinSpeed = 2.6f;     // рад/с
     private const float DriftFrac = 0.18f;    // горизонтальная скорость, ширин/с
     private const float SquashFlat = 0.85f;   // сплющивание при касании
     private const float SquashRecover = 10f;  // 1/с
@@ -76,7 +81,7 @@ public sealed class BoingScene : IScene, IAudioReactive
         _cell = Math.Max(2, _h / 12);
         _floorY = Math.Clamp((int)(_h * FloorFrac), 1, _h - 1);
         _r = _h * RadiusFrac;
-        _peak = _h * PeakFrac;
+        _peak = _h * Math.Clamp(options.GetFloat(PeakSpec.Name, PeakSpec.Default), PeakSpec.Min, PeakSpec.Max);
         float rMax = _r / SquashFlat;
         _lo = rMax;
         _hi = _w - rMax;
@@ -87,7 +92,7 @@ public sealed class BoingScene : IScene, IAudioReactive
         _x = _lo + rng.NextSingle() * (_hi - _lo);
         float dir = rng.Next(2) == 0 ? 1f : -1f;
         _vx = DriftFrac * _w * dir;
-        _spinRate = SpinSpeed * dir;
+        _spinRate = Math.Clamp(options.GetFloat(SpinSpec.Name, SpinSpec.Default), SpinSpec.Min, SpinSpec.Max) * dir;
         _spin = 0f;
         _sq = 1f;
         _bass = 0f;

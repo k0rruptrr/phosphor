@@ -3,9 +3,11 @@ using Phosphor.Core;
 namespace Phosphor.Overlays;
 
 /// <summary>
-/// OSD видика 90-х поверх сцены: PLAY, часы, счётчик ленты S[====  ]E, AUTO TRACKING.
+/// OSD видика 90-х поверх сцены: PLAY, часы, счётчик ленты S[====  ]E, AUTO TRACKING, REW в конце ленты.
+/// Показ по времени как у настоящего видика (см. VcrState): PLAY/часы/счётчик — несколько секунд после включения,
+/// потом гаснут; AUTO TRACKING — пока усталость держится; REW — в конце ленты.
 /// Крупный режим (cols >= 60 и rows >= 12): пиксельный шрифт 5×7 из секстантов (PixelFont), шкала — блоками █.
-/// Мелкий режим (меньше): обычный текст в клетках. Под надписью — тёмная подложка (Bg) с полем в 1 клетку.
+/// Мелкий режим (меньше): обычный текст в клетках. Плашек нет: Bg не трогается, контур рисует OsdLayer.
 /// Рисует только символами из GlyphSet, поэтому проходит через фильтры вместе со сценой.
 /// Дирижёр включает его только для пресетов со стадией vhs (см. OverlayConfig.VcrFor).
 /// </summary>
@@ -15,20 +17,13 @@ public sealed class VcrOverlay : IOverlay
 
     // Константы OSD
     private const int Margin = 2;                    // отступ от краёв, в клетках
-    private const double TapeSec = 180 * 60;         // кассета E-180
     private const int BarWide = 20;                  // ширина шкалы (cols >= 40, в крупном режиме — меньше при узкой сетке)
     private const int BigMinCols = 60;               // крупный шрифт — от этой ширины
     private const int BigMinRows = 12;
     private const int BigBarOverhead = 51;           // клетки под надписи крупной строки счётчика (кроме шкалы)
-    private const double PlayBlinkFor = 3.0;         // первые секунды PLAY мигает
-    private const double BlinkHalf = 0.5;            // полупериод мигания PLAY
-    private const double RewSec = 4.0;               // надпись REW после конца ленты
-    private const double RewQuick = 1.0;             // шкала уезжает к пустой за это время
-    private const float AutoTrackFatigue = 0.6f;     // совпадает с началом эпизодов автотрекинга в kassette
     private const int BufLen = 64;
 
     private static readonly Rgba Fg = Rgba.White;
-    private static readonly Rgba PlateColor = new(8, 8, 8);      // (0.03, 0.03, 0.03): тёмная подложка под надписью
     private static readonly bool HasPlayGlyph = GlyphSet.Contains('►');
     private static readonly bool HasRewGlyph = GlyphSet.Contains('◄');
     private const string PlayBig = "PLAY ►";
@@ -37,54 +32,56 @@ public sealed class VcrOverlay : IOverlay
     private static readonly string RewSmall = HasRewGlyph ? "REW ◄◄" : "REW <<";
     private const string AutoText = "AUTO TRACKING";
 
-    private double _t;          // секунды с Init (сумма dt)
-    private int _lap;           // номер прохода ленты (t / 180 мин)
-    private double _rewLeft;    // сколько секунд ещё показывать REW (после конца ленты)
-
+    private readonly VcrState _state = new();
     private readonly char[] _buf = new char[BufLen];
     private int _bn;
 
+    public VcrState State => _state;
+
     public void Init(int cols, int rows, Random rng)
     {
-        _t = 0;
-        _lap = 0;
-        _rewLeft = 0;
+        _state.SetOn(false);
     }
 
-    public void Update(float dt)
-    {
-        _t += dt;
-        if (_rewLeft > 0) _rewLeft -= dt;
-        int lap = (int)(_t / TapeSec);
-        if (lap != _lap)
-        {
-            _lap = lap;
-            _rewLeft = RewSec;
-        }
-    }
+    /// <summary>Видик включён/выключен (сцена с vhs). Включение запускает показ.</summary>
+    public void SetOn(bool on) => _state.SetOn(on);
+
+    /// <summary>Есть ли что рисовать в этом кадре. Если нет — Apply не вызывают, слой не рисуется вовсе.</summary>
+    public bool IsVisible(float fatigue) => _state.ShowOsd || _state.AutoTracking(fatigue);
+
+    public void Update(float dt) => _state.Update(dt);
 
     public void Apply(CharGrid grid, in OverlayContext ctx)
     {
+        bool show = _state.ShowOsd;
+        bool auto = _state.AutoTracking(ctx.Organism.Fatigue);
+        if (!show && !auto) return;
+
+        // Сетка OSD своя: очищаем, рисуем только текущие надписи
+        grid.Clear(Rgba.Black);
+
         int cols = grid.Cols, rows = grid.Rows;
         bool big = cols >= BigMinCols && rows >= BigMinRows;
         int adv = big ? PixelFont.Advance : 1;          // шаг символа, клеток
         int h = big ? PixelFont.CellsH : 1;             // высота строки текста, клеток
-        bool rew = _rewLeft > 0;
-        double pos = _t % TapeSec;                      // позиция ленты в проходе, с
+        bool rew = _state.Rew;
+        double pos = _state.Pos;                        // позиция ленты в проходе, с
         int barY = rows - 1 - Margin - (h - 1);         // нижняя строка OSD — на 2 клетки выше нижнего края
 
-        // Левый верх: REW после конца ленты, иначе PLAY (мигает первые 3 с)
-        if (rew)
+        if (!show)
         {
-            string s = big ? RewBig : RewSmall;
-            Emit(grid, Margin, Margin, s, big);
-            Plate(grid, Margin, Margin, s.Length * adv, h);
+            // Только AUTO TRACKING по центру верхней строки
+            AutoTrack(grid, Margin, cols - Margin, adv, big);
+            return;
         }
-        else if (_t >= PlayBlinkFor || Math.Floor(_t / BlinkHalf) % 2 == 0)
+
+        int leftEnd = Margin;                           // правый край надписи слева (для AUTO TRACKING)
+        // Левый верх: REW после конца ленты, иначе PLAY (мигает первые секунды показа)
+        if (rew || _state.PlayVisible)
         {
-            string s = big ? PlayBig : PlaySmall;
+            string s = rew ? (big ? RewBig : RewSmall) : (big ? PlayBig : PlaySmall);
             Emit(grid, Margin, Margin, s, big);
-            Plate(grid, Margin, Margin, s.Length * adv, h);
+            leftEnd = Margin + s.Length * adv;
         }
 
         // Правый верх: SP и часы HH:MM (двоеточие мигает раз в секунду)
@@ -93,29 +90,14 @@ public sealed class VcrOverlay : IOverlay
         if (ctx.Clock is DateTime clk)
         {
             AppendNum(clk.Hour, 2);
-            _buf[_bn++] = (_t % 1.0) < 0.5 ? ':' : ' ';
+            _buf[_bn++] = _state.ColonVisible ? ':' : ' ';
             AppendNum(clk.Minute, 2);
         }
         else Append("--:--");
         int cw = _bn * adv;
         int cx = cols - Margin - cw;
         Emit(grid, cx, Margin, _buf.AsSpan(0, _bn), big);
-        Plate(grid, cx, Margin, cw, h);
-
-        // AUTO TRACKING по центру верхней строки, между PLAY и часами (мигает 1 Гц при усталости сцены).
-        // Если между ними не помещается — не рисуем, чтобы не слипаться с соседними надписями.
-        if (ctx.Organism.Fatigue >= AutoTrackFatigue && (_t % 1.0) < 0.5)
-        {
-            int aw = AutoText.Length * adv;
-            int lo = Margin + PlayBig.Length * adv + 2;   // левый край свободной полосы
-            int hi = cx - 2;                              // правый край свободной полосы
-            if (hi - lo >= aw)
-            {
-                int ax = lo + (hi - lo - aw) / 2;
-                Emit(grid, ax, Margin, AutoText, big);
-                Plate(grid, ax, Margin, aw, h);
-            }
-        }
+        if (auto) AutoTrack(grid, leftEnd, cx - 2, adv, big);
 
         // Счётчик ленты: S[====    ]E 0:12:34
         int inner = big
@@ -123,8 +105,8 @@ public sealed class VcrOverlay : IOverlay
             : (cols >= 40 ? BarWide : Math.Max(0, cols / 2 - 6));
         // Во время REW шкала быстро уезжает влево к пустой; иначе — доля ленты (180 мин)
         double frac = rew
-            ? Math.Max(0, 1 - (RewSec - _rewLeft) / RewQuick)
-            : pos / TapeSec;
+            ? Math.Max(0, 1 - (VcrState.RewSec - _state.RewLeft) / VcrState.RewQuick)
+            : pos / VcrState.TapeSec;
         int filled = (int)Math.Round(frac * inner);
 
         int x = Margin;
@@ -154,8 +136,21 @@ public sealed class VcrOverlay : IOverlay
         AppendNum(secs / 60 % 60, 2);
         _buf[_bn++] = ':';
         AppendNum(secs % 60, 2);
-        x += Emit(grid, x, barY, _buf.AsSpan(0, _bn), big);
-        Plate(grid, Margin, barY, x - Margin, h);
+        Emit(grid, x, barY, _buf.AsSpan(0, _bn), big);
+    }
+
+    /// <summary>
+    /// AUTO TRACKING по центру верхней строки в полосе [left, right) клеток.
+    /// Если места нет — не рисуем, чтобы не слипаться с соседними надписями.
+    /// </summary>
+    private void AutoTrack(CharGrid grid, int left, int right, int adv, bool big)
+    {
+        int aw = AutoText.Length * adv;
+        int lo = left + 2;
+        int hi = right;
+        if (hi - lo < aw) return;
+        int ax = lo + (hi - lo - aw) / 2;
+        Emit(grid, ax, Margin, AutoText, big);
     }
 
     private void Append(string s)
@@ -201,13 +196,5 @@ public sealed class VcrOverlay : IOverlay
             x += PixelFont.Advance;
         }
         return x - start;
-    }
-
-    /// <summary>Тёмная подложка под надписью: прямоугольник w×h плюс поле в 1 клетку. Меняет только Bg.</summary>
-    private static void Plate(CharGrid grid, int x, int y, int w, int h)
-    {
-        for (int py = y - 1; py <= y + h; py++)
-            for (int px = x - 1; px <= x + w; px++)
-                if (grid.InBounds(px, py)) grid[px, py].Bg = PlateColor;
     }
 }

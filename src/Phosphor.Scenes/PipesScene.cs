@@ -3,8 +3,17 @@ using Phosphor.Core;
 namespace Phosphor.Scenes;
 
 /// <summary>Трубы как в Windows 95, но из двойной псевдографики.</summary>
-public sealed class PipesScene : IScene, IAudioReactive
+public sealed class PipesScene : IScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec PipesSpec = new("pipes", SceneParamKind.Int, 4f, 1f, MaxPipes, "число труб");
+    public static readonly SceneParamSpec StepsPerSecSpec = new("stepsPerSec", SceneParamKind.Float, 40f, 0f, 200f, "скорость роста труб, шагов/с");
+    public static readonly SceneParamSpec TurnChanceSpec = new("turnChance", SceneParamKind.Float, 0.15f, 0f, 1f, "частота поворотов труб");
+    public static readonly SceneParamSpec FillLimitSpec = new("fillLimit", SceneParamKind.Float, 0.55f, 0f, 1f, "заполнение экрана до сброса");
+    private static readonly SceneParamSpec[] ParamList = { PipesSpec, StepsPerSecSpec, TurnChanceSpec, FillLimitSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
     /// <summary>Сторона ячейки. Порядок по часовой стрелке: N, E, S, W.</summary>
     public enum Side { N, E, S, W }
 
@@ -70,10 +79,10 @@ public sealed class PipesScene : IScene, IAudioReactive
         _rows = rows;
         _rng = rng;
         _speedScale = MathF.Max(0f, options.Speed);
-        int n = Math.Clamp(options.GetInt("pipes", 4), 1, MaxPipes);
-        _stepsPerSec = MathF.Max(0f, options.GetFloat("stepsPerSec", 40f));
-        _turnChance = Math.Clamp(options.GetFloat("turnChance", 0.15f), 0f, 1f);
-        _fillLimit = Math.Clamp(options.GetFloat("fillLimit", 0.55f), 0f, 1f);
+        int n = Math.Clamp(options.GetInt(PipesSpec.Name, (int)PipesSpec.Default), (int)PipesSpec.Min, (int)PipesSpec.Max);
+        _stepsPerSec = Math.Clamp(options.GetFloat(StepsPerSecSpec.Name, StepsPerSecSpec.Default), StepsPerSecSpec.Min, StepsPerSecSpec.Max);
+        _turnChance = Math.Clamp(options.GetFloat(TurnChanceSpec.Name, TurnChanceSpec.Default), TurnChanceSpec.Min, TurnChanceSpec.Max);
+        _fillLimit = Math.Clamp(options.GetFloat(FillLimitSpec.Name, FillLimitSpec.Default), FillLimitSpec.Min, FillLimitSpec.Max);
         _mono = IsMono(options.Palette);
         _monoBase = Palettes.Base(options.Palette);
 

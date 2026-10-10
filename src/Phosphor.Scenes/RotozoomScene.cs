@@ -9,14 +9,22 @@ namespace Phosphor.Scenes;
 /// Звук: удар — «панч» масштаба ×0.8 (затухает за 150 мс), бас — добавка к скорости вращения,
 /// каждый 4-й удар — смена направления вращения.
 /// </summary>
-public sealed class RotozoomScene : IScene, IAudioReactive
+public sealed class RotozoomScene : IScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec BeatsSpec = new("beatsPerReverse", SceneParamKind.Int, 4f, 1f, 16f, "ударов до разворота");
+    public static readonly SceneParamSpec PunchSpec = new("punchScale", SceneParamKind.Float, 0.8f, 0.3f, 1f, "сила удара: сжатие масштаба");
+    private static readonly SceneParamSpec[] ParamList = { BeatsSpec, PunchSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private int _beatsPerReverse;
+    private float _punchScale;
+
     private const int TexSize = 64;
     private const int TexMask = TexSize - 1;
     private const float TickDt = 1f / 50f;           // логика на 50 Гц
     private const float PunchTime = 0.15f;           // затухание панча, с
-    private const float PunchScale = 0.8f;           // масштаб в момент удара × 0.8
-    private const int BeatsPerReverse = 4;
 
     private static readonly float PunchMul = MathF.Exp(-TickDt / PunchTime);
 
@@ -37,6 +45,8 @@ public sealed class RotozoomScene : IScene, IAudioReactive
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _beatsPerReverse = Math.Clamp(options.GetInt(BeatsSpec.Name, (int)BeatsSpec.Default), (int)BeatsSpec.Min, (int)BeatsSpec.Max);
+        _punchScale = Math.Clamp(options.GetFloat(PunchSpec.Name, PunchSpec.Default), PunchSpec.Min, PunchSpec.Max);
         _speed = MathF.Max(0f, options.Speed);
         _canvas = new RetroCanvas(cols, rows, CanvasMode.HalfBlock);
         _clock = new RetroClock(50f);
@@ -110,7 +120,7 @@ public sealed class RotozoomScene : IScene, IAudioReactive
         _tBass = audio.Active ? audio.Bass : 0f;
         if (!audio.Active || !audio.Beat) return;
         _punch = 1f;
-        if (++_beats % BeatsPerReverse == 0) _dir = -_dir;
+        if (++_beats % _beatsPerReverse == 0) _dir = -_dir;
     }
 
     public void Update(float dt)
@@ -127,7 +137,7 @@ public sealed class RotozoomScene : IScene, IAudioReactive
         }
 
         float angle = _phase + 0.2f * MathF.Sin(_zphase);   // непрерывное вращение + лёгкое покачивание
-        float zoom = (1.75f + 1.25f * MathF.Sin(_zphase)) * (1f - (1f - PunchScale) * _punch);
+        float zoom = (1.75f + 1.25f * MathF.Sin(_zphase)) * (1f - (1f - _punchScale) * _punch);
 
         float t = _clock.Time;
         int w = _canvas.Width, h = _canvas.Height;

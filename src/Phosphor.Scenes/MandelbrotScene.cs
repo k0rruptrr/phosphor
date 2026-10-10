@@ -11,8 +11,16 @@ namespace Phosphor.Scenes;
 /// Переход к следующей точке — затемнение и проявление. Звук: удар — вспышка яркости и рывок прокрутки цвета.
 /// Расчёт параллельный по строкам.
 /// </summary>
-public sealed class MandelbrotScene : IScene, IAudioReactive
+public sealed class MandelbrotScene : IScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec ColorSpec = new("colorSpeed", SceneParamKind.Float, 0.04f, 0f, 0.5f, "скорость смены палитры, циклов/с");
+    private static readonly SceneParamSpec[] ParamList = { ColorSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _colorSpeed;
+
     private enum Phase { Zoom, FadeOut, FadeIn }
 
     private const int PaletteCount = 4;
@@ -23,7 +31,6 @@ public sealed class MandelbrotScene : IScene, IAudioReactive
     private const float DoublingTime = 7f;       // секунд на ×2
     private const float FadeTime = 1.2f;         // затемнение / проявление при смене точки, с
     private const float ColorPeriod = 24f;       // итераций на один цикл палитры
-    private const float ColorSpeed = 0.04f;      // циклов палитры в секунду (базовая прокрутка)
     private const float KickMin = 0.06f, KickMax = 0.10f; // рывок прокрутки на удар, циклов палитры
     private const float KickRate = 8f;           // скорость отыгрывания рывка, 1/с
     private const float FlashTau = 0.15f;        // затухание вспышки, с
@@ -135,6 +142,7 @@ public sealed class MandelbrotScene : IScene, IAudioReactive
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _colorSpeed = Math.Clamp(options.GetFloat(ColorSpec.Name, ColorSpec.Default), ColorSpec.Min, ColorSpec.Max);
         _rng = rng;
         _speed = MathF.Max(0f, options.Speed);
         _canvas = new RetroCanvas(cols, rows, CanvasMode.HalfBlock);
@@ -212,7 +220,7 @@ public sealed class MandelbrotScene : IScene, IAudioReactive
         _flash *= MathF.Exp(-dt / FlashTau);
         float push = _kick * (1f - MathF.Exp(-dt * KickRate));
         _kick -= push;
-        _offset += dt * ColorSpeed + push;
+        _offset += dt * _colorSpeed + push;
         _offset -= MathF.Floor(_offset);
 
         // автопилот: цель — по буферу прошлого кадра, центр плавно тянется к ней

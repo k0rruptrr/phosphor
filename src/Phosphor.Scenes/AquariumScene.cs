@@ -6,8 +6,17 @@ namespace Phosphor.Scenes;
 /// Аквариум: тёплая вода с лучами света, водоросли на дне, рыбы, пузыри и редкая акула.
 /// Вся случайность — из rng в Init и Update. Draw только читает состояние.
 /// </summary>
-public sealed class AquariumScene : IScene, IAudioReactive
+public sealed class AquariumScene : IScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек. Рыб: множитель от автоматического количества (авто = max(3, площадь/900)).
+    public static readonly SceneParamSpec FishDensitySpec = new("fishDensity", SceneParamKind.Float, 1f, 0.25f, 4f, "рыбы: × от авто-количества");
+    private static readonly SceneParamSpec[] ParamList = { FishDensitySpec };
+
+    /// <summary>Старый абсолютный ключ "fish": если задан в конфиге, имеет приоритет над множителем. В Params не показывается.</summary>
+    private const string LegacyFishKey = "fish";
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
     private const int MaxBubbles = 128;
     private const int LightLevels = 16;   // уровни подсветки лучей; цвета фона по уровням считаются в Init
     private const float SharkSpeed = 10f;
@@ -179,9 +188,14 @@ public sealed class AquariumScene : IScene, IAudioReactive
             };
         }
 
-        int fishCount = _waterMax >= 1
-            ? Math.Clamp(options.GetInt("fish", Math.Max(3, cols * rows / 900)), 0, 500)
-            : 0;
+        int fishCount = 0;
+        if (_waterMax >= 1)
+        {
+            int legacy = options.GetInt(LegacyFishKey, -1);
+            fishCount = legacy >= 0
+                ? Math.Clamp(legacy, 0, 500)
+                : Math.Max(1, (int)MathF.Round(Math.Max(3, cols * rows / 900) * Math.Clamp(options.GetFloat(FishDensitySpec.Name, FishDensitySpec.Default), FishDensitySpec.Min, FishDensitySpec.Max)));
+        }
         _fish = new Fish[fishCount];
         for (int i = 0; i < fishCount; i++)
         {

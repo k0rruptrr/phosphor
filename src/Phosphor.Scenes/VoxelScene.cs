@@ -8,8 +8,16 @@ namespace Phosphor.Scenes;
 /// W×H (W = cols, H = rows × 2); Draw переводит пары пикселей в полублоки '▀' (верх — Fg, низ — Bg) и рисует HUD.
 /// Draw не меняет состояние и не использует rng.
 /// </summary>
-public sealed class VoxelScene : IScene, IAudioReactive
+public sealed class VoxelScene : IScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec FlySpec = new("flySpeed", SceneParamKind.Float, 40f, 0f, 200f, "скорость полёта, ед./с");
+    private static readonly SceneParamSpec[] ParamList = { FlySpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _flySpeed;
+
     private const int MapSize = 512;
     private const int MapMask = MapSize - 1;
     private const int MapShift = 9;
@@ -19,7 +27,6 @@ public sealed class VoxelScene : IScene, IAudioReactive
     private const float HeightExp = 1.8f;        // степень ранга: расширяет низины
     private const float ClearanceTarget = 60f;   // высота над максимумом впереди
     private const float ClearanceMin = 12f;      // жёсткий минимум над землёй под камерой
-    private const float FlySpeed = 40f;          // ед./с × Speed
     private const float LookAhead = 120f;        // дистанция, по которой ищем максимум высоты впереди
     private const float MaxDist = 340f;
     private const float FogStart = 220f;
@@ -101,13 +108,14 @@ public sealed class VoxelScene : IScene, IAudioReactive
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _flySpeed = Math.Clamp(options.GetFloat(FlySpec.Name, FlySpec.Default), FlySpec.Min, FlySpec.Max);
         _cols = cols;
         _rows = rows;
         _w = cols;
         _h = rows * 2;
         _rng = rng;
         _speed = MathF.Max(0f, options.Speed);
-        _spdKmh = Math.Clamp((int)MathF.Round(FlySpeed * _speed), 0, 999);
+        _spdKmh = Math.Clamp((int)MathF.Round(_flySpeed * _speed), 0, 999);
         _palette = (options.Palette ?? "default").ToLowerInvariant();
         _thermal = _palette is "green" or "amber" or "mono";
 
@@ -171,7 +179,7 @@ public sealed class VoxelScene : IScene, IAudioReactive
 
         // Полёт вперёд: направление взгляда = (-sin, -cos).
         _flyKick *= MathF.Exp(-dt / FlyKickTau);
-        float v = FlySpeed * _speed * dt * (1f + _flyKick);
+        float v = _flySpeed * _speed * dt * (1f + _flyKick);
         _camX = Wrap(_camX - _sin * v);
         _camY = Wrap(_camY - _cos * v);
 

@@ -9,14 +9,21 @@ namespace Phosphor.Scenes;
 /// Звук: удар — рывок скорости вперёд ×3 (затухает ~300 мс), бас — центр раскачивается сильнее,
 /// высокие — подкрутка поворота.
 /// </summary>
-public sealed class TunnelScene : IScene, IAudioReactive
+public sealed class TunnelScene : IScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec ForwardSpec = new("forward", SceneParamKind.Float, 12f, 0f, 60f, "скорость полёта, текселей/с");
+    public static readonly SceneParamSpec RotateSpec = new("rotate", SceneParamKind.Float, 6f, 0f, 30f, "скорость поворота, текселей/с");
+    private static readonly SceneParamSpec[] ParamList = { ForwardSpec, RotateSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _baseForward, _baseRotate;
+
     private const int TexSize = 64;
     private const int TexMask = TexSize - 1;
     private const int CellSize = 8;               // сторона клетки шахматки, текселей
     private const float TickDt = 1f / 50f;        // логика на 50 Гц
-    private const float BaseForward = 12f;        // текселей/с вперёд
-    private const float BaseRotate = 6f;          // текселей/с поворот
     private const float BoostTime = 0.1f;         // экспонента рывка: ×3 гаснет за ~300 мс
     private const float FogRadius = 0.25f;        // внутренние 25% радиуса уходят в чёрный
 
@@ -43,6 +50,8 @@ public sealed class TunnelScene : IScene, IAudioReactive
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _baseForward = Math.Clamp(options.GetFloat(ForwardSpec.Name, ForwardSpec.Default), ForwardSpec.Min, ForwardSpec.Max);
+        _baseRotate = Math.Clamp(options.GetFloat(RotateSpec.Name, RotateSpec.Default), RotateSpec.Min, RotateSpec.Max);
         _speed = MathF.Max(0f, options.Speed);
         _canvas = new RetroCanvas(cols, rows, CanvasMode.HalfBlock);
         _clock = new RetroClock(50f);
@@ -114,8 +123,8 @@ public sealed class TunnelScene : IScene, IAudioReactive
         int ticks = _clock.Advance(dt * _speed);
         for (int i = 0; i < ticks; i++)
         {
-            _fwd = (_fwd + BaseForward * (1f + 2f * _boost) * TickDt) % TexSize;
-            _rot = (_rot + (BaseRotate + 2f * _high) * TickDt) % TexSize;
+            _fwd = (_fwd + _baseForward * (1f + 2f * _boost) * TickDt) % TexSize;
+            _rot = (_rot + (_baseRotate + 2f * _high) * TickDt) % TexSize;
             _boost *= BoostMul;
         }
 

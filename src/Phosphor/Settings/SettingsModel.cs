@@ -11,7 +11,7 @@ public enum Pick { Off, On, Favorite }
 /// которых в окне нет (пресеты, params, network.news и т.д.), при сохранении не теряются.
 /// Инвариант: Favorites ⊆ Enabled (для сцен и для пресетов).
 /// </summary>
-public sealed class SettingsModel
+public sealed partial class SettingsModel
 {
     private static readonly StringComparer Cmp = StringComparer.OrdinalIgnoreCase;
 
@@ -20,10 +20,11 @@ public sealed class SettingsModel
     /// <summary>Сцены каталога (в порядке каталога). Сцены из конфига, которых в каталоге нет, сохраняются как есть.</summary>
     public IReadOnlyList<string> SceneIds { get; }
 
-    public SettingsModel(PhosphorConfig config, IEnumerable<string> sceneCatalog)
+    public SettingsModel(PhosphorConfig config, IEnumerable<string> sceneCatalog, SettingsSpecs? specs = null)
     {
         Config = config ?? throw new ArgumentNullException(nameof(config));
         SceneIds = sceneCatalog.Distinct(Cmp).ToList();
+        _specs = specs ?? SettingsSpecs.FromCatalog();
 
         // Приводим к инварианту Favorites ⊆ Enabled (конфиг мог быть написан руками)
         var sc = Config.Scenes;
@@ -31,6 +32,9 @@ public sealed class SettingsModel
         var fl = Config.Filters;
         if (fl.Enabled is not null)
             fl.Favorites = fl.Favorites.Where(f => Has(fl.Enabled, f)).ToList();
+
+        // Снимок пресетов «как в файле» — для метки «изменён*» и вопроса при закрытии
+        foreach (var (name, el) in Config.Filters.Presets) _loadedPresets[name] = el.Clone();
     }
 
     public IReadOnlyList<string> PresetNames => Config.Filters.Presets.Keys.ToList();
@@ -173,13 +177,17 @@ public sealed class SettingsModel
         return PresetNames.FirstOrDefault(p => GetPreset(p) != Pick.Off) ?? PresetNames.FirstOrDefault();
     }
 
-    /// <summary>Аргументы дочернего процесса превью: «/p HWND --scene ID [--preset NAME]» (как Windows вызывает заставку).</summary>
-    public static string PreviewArguments(nint parentHwnd, string scene, string? preset)
+    /// <summary>
+    /// Аргументы дочернего процесса превью: «/p HWND --scene ID [--preset NAME] [--config PATH]» (как Windows вызывает заставку).
+    /// --config — временный конфиг окна (текущие правки, не phosphor.json).
+    /// </summary>
+    public static string PreviewArguments(nint parentHwnd, string scene, string? preset, string? configPath = null)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("/p ").Append(parentHwnd.ToString(System.Globalization.CultureInfo.InvariantCulture));
         sb.Append(" --scene ").Append(Quote(scene));
         if (!string.IsNullOrEmpty(preset)) sb.Append(" --preset ").Append(Quote(preset));
+        if (!string.IsNullOrEmpty(configPath)) sb.Append(" --config ").Append(Quote(configPath));
         return sb.ToString();
     }
 

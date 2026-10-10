@@ -8,7 +8,7 @@ public class VcrOverlayTests
 {
     private static readonly Rgba Scene = Rgba.Hex(0x333333);
     private static readonly Rgba Bg = Rgba.Hex(0x101010);
-    private static readonly Rgba Plate = new(8, 8, 8);
+    private static readonly Rgba PlateColor = new(8, 8, 8);     // старая тёмная подложка — больше не рисуется
 
     private static OverlayContext Ctx(DateTime? clock = null, float fatigue = 0f) =>
         new OverlayContext("plasma", "kassette", 0, 1, 59.9f, 0, clock,
@@ -24,11 +24,20 @@ public class VcrOverlayTests
         return g;
     }
 
+    /// <summary>Видик включён (как сцена с vhs): показ запускается с нуля.</summary>
     private static VcrOverlay Make(int cols, int rows)
     {
         var v = new VcrOverlay();
         v.Init(cols, rows, new Random(1));
+        v.SetOn(true);
         return v;
+    }
+
+    /// <summary>Повторное включение — новый показ PLAY/часов/счётчика (как смена сцены на vhs).</summary>
+    private static void ShowNow(VcrOverlay v)
+    {
+        v.SetOn(false);
+        v.SetOn(true);
     }
 
     private static string Row(CharGrid g, int y)
@@ -76,12 +85,52 @@ public class VcrOverlayTests
                 Assert.True(b >= 0 && b <= 63);
     }
 
-    // ---- мелкий режим (узкая сетка) ----
+    // ---- показ по времени (как у видика) ----
 
     [Fact]
     public void Id_is_vcr()
     {
         Assert.Equal("vcr", new VcrOverlay().Id);
+    }
+
+    [Fact]
+    public void Off_tape_draws_nothing()
+    {
+        var v = new VcrOverlay();
+        v.Init(40, 40, new Random(1));
+        Assert.False(v.IsVisible(0.9f));
+        var g = Filled(40, 40);
+        // без IsVisible сцена не должна трогаться: вызывающий Compose пропускает Apply
+        Assert.Equal('#', g[0, 0].Ch);
+    }
+
+    [Fact]
+    public void Play_block_is_visible_for_4_seconds_then_gone()
+    {
+        const int cols = 120, rows = 40;
+        var v = Make(cols, rows);
+
+        v.Update(3.8f);                           // t = 3.8 с: показ идёт
+        Assert.True(v.IsVisible(0f));
+        var g = Filled(cols, rows);
+        v.Apply(g, Ctx());
+        Assert.True(IsSextant(g[2, 2].Ch));       // PLAY
+
+        v.Update(1.2f);                           // t = 5.0 с: всё погасло
+        Assert.False(v.IsVisible(0f));
+    }
+
+    [Fact]
+    public void Play_blinks_during_first_two_seconds_of_show()
+    {
+        var s = new VcrState();
+        s.SetOn(true);
+        s.Update(0.2f);
+        Assert.True(s.PlayVisible);               // фаза «вкл»
+        s.Update(0.6f);                           // 0.8 с — фаза «выкл»
+        Assert.False(s.PlayVisible);
+        s.Update(1.4f);                           // 2.2 с — мигание кончилось, PLAY постоянно
+        Assert.True(s.PlayVisible);
     }
 
     [Fact]
@@ -121,6 +170,7 @@ public class VcrOverlayTests
         var g = Filled(cols, rows);
         var v = Make(cols, rows);
         v.Update(90 * 60f);
+        ShowNow(v);                              // видик включили на 90-й минуте ленты
         v.Apply(g, Ctx());
         int bar = rows - 3;
         int filled = CountChar(g, bar, '=');
@@ -130,7 +180,7 @@ public class VcrOverlayTests
     }
 
     [Fact]
-    public void Small_tape_end_shows_rew_then_bar_is_nearly_empty()
+    public void Small_tape_end_shows_rew_then_play_then_bar_is_nearly_empty()
     {
         const int cols = 40, rows = 40;
         var g = Filled(cols, rows);
@@ -139,7 +189,7 @@ public class VcrOverlayTests
         v.Apply(g, Ctx());
         Assert.Contains("REW", Row(g, 2));
 
-        v.Update(4.1f);                          // REW отыграл, ленту прошли заново
+        v.Update(4.1f);                          // REW отыграл — показ PLAY ещё 4 с
         g = Filled(cols, rows);
         v.Apply(g, Ctx());
         Assert.Contains("PLAY", Row(g, 2));
@@ -163,6 +213,19 @@ public class VcrOverlayTests
     }
 
     [Fact]
+    public void Auto_tracking_blinks_at_1_hz_while_fatigue_holds()
+    {
+        var v = Make(120, 40);
+        v.Update(10.2f);                         // показа нет, фаза «вкл»
+        Assert.True(v.IsVisible(0.7f));
+        v.Update(0.5f);                          // фаза «выкл»
+        Assert.False(v.IsVisible(0.7f));
+        v.Update(0.5f);                          // снова «вкл»
+        Assert.True(v.IsVisible(0.7f));
+        Assert.False(v.IsVisible(0.3f));         // усталость упала — не показываем
+    }
+
+    [Fact]
     public void Narrow_grid_does_not_throw_or_write_outside()
     {
         const int cols = 30, rows = 10;
@@ -177,42 +240,35 @@ public class VcrOverlayTests
     // ---- крупный режим (120×40) ----
 
     [Fact]
-    public void Big_changes_only_its_own_cells()
+    public void Big_text_is_only_in_its_rows_and_no_plate_color_is_used()
     {
         const int cols = 120, rows = 40;
         var g = Filled(cols, rows);
         var v = Make(cols, rows);
         v.Update(0.1f);
+        ShowNow(v);
         v.Apply(g, Ctx(new DateTime(2026, 10, 10, 14, 5, 0), fatigue: 0.7f));
 
         // Текст: верхняя строка (y 2..4) и строка счётчика (y rows-5..rows-3).
-        // Подложка: поле в 1 клетку вокруг текста.
         int top = 2, bar = rows - 5;
         bool InText(int y) => (y >= top && y < top + 3) || (y >= bar && y < bar + 3);
-        bool InPlate(int y) => (y >= top - 1 && y <= top + 3) || (y >= bar - 1 && y <= bar + 3);
-        int textCells = 0, plateCells = 0;
+        int textCells = 0;
         for (int y = 0; y < rows; y++)
             for (int x = 0; x < cols; x++)
             {
                 var cell = g[x, y];
-                if (cell.Ch != '#')
+                if (cell.Ch != ' ')
                 {
                     textCells++;
                     Assert.True(InText(y), $"текст задел строку {y} в ({x},{y})");
                 }
-                if (cell.Bg != Bg)
-                {
-                    plateCells++;
-                    Assert.Equal(Plate, cell.Bg);
-                    Assert.True(InPlate(y), $"подложка вне надписи: ({x},{y})");
-                }
+                Assert.NotEqual(PlateColor, cell.Bg);   // подложки нет
             }
         Assert.True(textCells > 0);
-        Assert.True(plateCells > 0);
     }
 
     [Fact]
-    public void Big_top_left_is_sextant_text_on_dark_plate()
+    public void Big_top_left_is_sextant_text_without_plate()
     {
         const int cols = 120, rows = 40;
         var g = Filled(cols, rows);
@@ -220,8 +276,7 @@ public class VcrOverlayTests
         v.Update(0.1f);                          // PLAY видим
         v.Apply(g, Ctx());
         Assert.True(IsSextant(g[2, 2].Ch));      // первая клетка буквы P
-        Assert.Equal(Plate, g[1, 1].Bg);         // поле вокруг надписи
-        Assert.Equal(Bg, g[cols - 3, rows - 2].Bg); // далеко от OSD — фон сцены
+        Assert.Equal(Rgba.Black, g[1, 1].Bg);    // поля-подложки нет: фон клетки не тронут
     }
 
     [Fact]
@@ -231,6 +286,7 @@ public class VcrOverlayTests
         var g = Filled(cols, rows);
         var v = Make(cols, rows);
         v.Update(90 * 60f);
+        ShowNow(v);
         v.Apply(g, Ctx());
         int barRow = rows - 5;                    // блоки — верхние 2 строки шкалы
         int blocks = CountChar(g, barRow, '█');
@@ -246,10 +302,9 @@ public class VcrOverlayTests
         v.Update(0.2f);
         var g = Filled(cols, rows);
         v.Apply(g, Ctx(fatigue: 0.7f));
-        // Между PLAY (x 2..25) и часами (справа) — текст есть и не слипается с ними: между ними стоит поле
+        // Между PLAY (x 2..25) и часами (справа) — текст есть и не слипается с ними
         Assert.Contains(Enumerable.Range(28, 50), x => IsSextant(g[x, 2].Ch));
-        Assert.Equal(Plate, g[29, 1].Bg);         // поле слева от AUTO TRACKING (текст с x=30)
-        Assert.Equal(Bg, g[84, 0].Bg);            // над строкой OSD — фон сцены
+        Assert.DoesNotContain(Enumerable.Range(0, cols), x => g[x, 1].Bg == PlateColor);
     }
 
     [Fact]

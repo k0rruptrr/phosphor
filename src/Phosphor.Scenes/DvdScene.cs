@@ -7,9 +7,15 @@ namespace Phosphor.Scenes;
 /// Прыгающий DVD-логотип. Отскоки по обеим осям в пределах 0.15 с — угол: праздник на 4 с.
 /// Параметр trail (по умолчанию false) — тающий след. Палитры green/amber/mono — оттенки цвета палитры.
 /// </summary>
-public sealed class DvdScene : IScene, IAudioReactive
+public sealed class DvdScene : IScene, IAudioReactive, ISceneParams
 {
-    private const float BaseSpeed = 14f;          // ячеек/с при Speed = 1 (по X)
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec TrailSpec = new("trail", SceneParamKind.Bool, 0f, 0f, 1f, "тающий след за логотипом");
+    private static readonly SceneParamSpec[] ParamList = { TrailSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private const float BaseSpeed = 14f;         // ячеек/с при Speed = 1 (по X)
     private const float VyRatio = 0.55f;          // vy = vx * 0.55: ячейки высокие, диагональ ~45°
     private const float CornerWindow = 0.15f;     // с: два отскока ближе этого — угол
     private const float PartyDuration = 4f;       // с
@@ -120,7 +126,7 @@ public sealed class DvdScene : IScene, IAudioReactive
         _rows = rows;
         _rng = rng;
         _speed = MathF.Max(0f, options.Speed);
-        _trail = options.GetBool("trail", false);
+        _trail = options.GetBool(TrailSpec.Name, TrailSpec.Default > 0.5f);
         _palName = options.Palette.ToLowerInvariant();
         _mono = _palName is "green" or "amber" or "mono";
 

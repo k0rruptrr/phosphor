@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing.Imaging;
 using System.Globalization;
 using Phosphor.Core;
+using Phosphor.Gfx;
 using Phosphor.Platform;
 using WinTimer = System.Windows.Forms.Timer;
 
@@ -20,6 +21,10 @@ internal sealed class SettingsForm : Form
 {
     private const int TabsX = 16, TabsY = 16, TabsW = 600, TabsH = 540;
     private const int PrevX = 632, PrevY = 40;
+    // Строки параметров (ширина панели 480, содержимое 464): подписи | контрол | значение | «по умолчанию»
+    private const int MaxLabelCol = 264, ValueX = 376, ValueW = 56, ControlEnd = 368, ResetX = 436;
+    /// <summary>Ширина колонки подписей текущей группы строк (см. LabelColumn).</summary>
+    private int _labelCol = 150;
 
     private readonly SettingsModel _model;
     private readonly string _cfgPath;
@@ -44,6 +49,13 @@ internal sealed class SettingsForm : Form
     private readonly CheckBox _shufScenes = new(), _shufPresets = new(), _perMonitor = new(), _beatSync = new();
     private readonly NumBox _interval = new(), _transSec = new(), _overlayPct = new();
     private readonly ComboBox _transition = new();
+    private readonly SliderBox _trail = new();
+    private readonly Label _trailValue = new();
+    // Параметры под превью (сцена на вкладке «Сцены», пресет на «Фильтрах»)
+    private readonly Label _paramsTitle = new();
+    private readonly ParamsPanel _params = new();
+    private readonly Button _sceneResetAll = new();
+    private readonly Button _presetSaveAs = new(), _presetBuiltin = new(), _presetDelete = new();
     // Диммер
     private readonly CheckBox _dimEnabled = new(), _dimHw = new();
     private readonly NumBox _dimDelay = new(), _dimFade = new(), _dimHwLevel = new(), _dimSwLevel = new();
@@ -55,6 +67,12 @@ internal sealed class SettingsForm : Form
     private readonly TextBox _city = new();
 
     private string _previewScene = "";
+    /// <summary>Пресет, который редактируется и показывается в превью (выбран в списке или активный). null — shuffle.</summary>
+    private string? _editPreset;
+    /// <summary>Ключ, по которому построены строки параметров (вкладка|сцена|пресет): меняется — строки пересобираются.</summary>
+    private string _paramsKey = "";
+    /// <summary>Программная установка значений: события комбобоксов и списков не пишут в конфиг.</summary>
+    private bool _loading;
 
     private static readonly Choice[] TransitionChoices =
     {
@@ -69,10 +87,10 @@ internal sealed class SettingsForm : Form
         _model = model;
         _cfgPath = cfgPath;
         _log = log;
-        _preview = new SettingsPreview(livePreview, log);
+        _preview = new SettingsPreview(livePreview, model.Config, log);
 
         _scenes = new PickList(_model.GetScene, id => { _model.CycleScene(id); RefreshScenesAfterChange(id); });
-        _presets = new PickList(_model.GetPreset, name => { _model.CyclePreset(name); UpdatePreview(); });
+        _presets = new PickList(_model.GetPreset, name => { _model.CyclePreset(name); UpdatePreview(); }, _model.IsPresetModified);
 
         Text = "PHOSPHOR — настройки";
         FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -89,6 +107,7 @@ internal sealed class SettingsForm : Form
 
         BuildTabs();
         BuildPreviewColumn();
+        BuildParamsColumn();
         BuildBottom();
         Controls.Add(_tabs);
         Controls.Add(_previewCaption);
@@ -100,12 +119,17 @@ internal sealed class SettingsForm : Form
         _save.FlatAppearance.BorderColor = Theme.Accent;
         _save.ForeColor = Theme.Accent;
 
+        _loading = true;
         LoadControls();
+        _loading = false;
         _status.Text = "Конфиг: " + _cfgPath;
         _tip.SetToolTip(_status, _cfgPath);
-        FormClosing += (_, _) => _preview.Stop();
+        FormClosing += OnFormClosing;
         _scenes.SelectionChanged += (_, _) => OnScenesSelection();
+        _presets.SelectionChanged += (_, _) => OnPresetsSelection();
         _tabs.SelectedIndexChanged += (_, _) => UpdatePreview();
+        _editPreset = ActivePresetName();
+        if (_editPreset is not null) _presets.SelectId(_editPreset);
         UpdatePreview();
     }
 
@@ -159,7 +183,7 @@ internal sealed class SettingsForm : Form
         _activePreset.Location = new Point(LabelCol(FilterLabels), 12);
         _activePreset.Size = new Size(300, 24);
         _activePreset.DropDownStyle = ComboBoxStyle.DropDownList;
-        _activePreset.SelectedIndexChanged += (_, _) => UpdatePreview();
+        _activePreset.SelectedIndexChanged += (_, _) => { if (!_loading) OnActivePresetChanged(); };
         p.Controls.Add(_activePreset);
 
         _presetFavOnly.Text = "только любимые";
@@ -199,7 +223,20 @@ internal sealed class SettingsForm : Form
 
         Place(p, Lbl("вероятность HUD-оверлея, %"), 12, 270);
         Num(p, _overlayPct, 0, 100, 0, LabelCol(ShuffleLabels), 266, 90);
+
+        Place(p, Lbl("шлейф (моушн-блюр)"), 12, 310);
+        _trail.Minimum = 0f;
+        _trail.Maximum = 0.9f;
+        _trail.Size = new Size(260, 24);
+        _trail.Location = new Point(LabelCol(ShuffleLabels), 306);
+        _trail.ValueChanged += (_, _) => { _model.Config.Screen.Trail = _trail.Value; ShowTrail(); UpdatePreview(); };
+        p.Controls.Add(_trail);
+        _trailValue.AutoSize = true;
+        _trailValue.Location = new Point(LabelCol(ShuffleLabels) + 270, 310);
+        p.Controls.Add(_trailValue);
     }
+
+    private void ShowTrail() => _trailValue.Text = _trail.Value.ToString("0.00", CultureInfo.InvariantCulture);
 
     private void BuildDimmerPage(Panel p)
     {
@@ -310,6 +347,44 @@ internal sealed class SettingsForm : Form
         Controls.Add(hint);
     }
 
+    /// <summary>Под превью: параметры сцены (вкладка «Сцены») или пресета (вкладка «Фильтры»). На других вкладках пусто.</summary>
+    private void BuildParamsColumn()
+    {
+        _paramsTitle.AutoSize = true;
+        _paramsTitle.Location = new Point(PrevX, 350);
+        _paramsTitle.ForeColor = Theme.Muted;
+        // Список параметров — до y=506; кнопки одной строкой внизу колонки (y=512)
+        _params.Location = new Point(PrevX, 372);
+        _params.Size = new Size(480, 134);
+
+        _sceneResetAll.Text = "все по умолчанию";
+        _sceneResetAll.Location = new Point(PrevX, 512);
+        _sceneResetAll.Size = new Size(210, 26);
+        _sceneResetAll.Click += (_, _) => { if (_previewScene.Length > 0) { _model.ResetSceneParams(_previewScene); RebuildParams(); UpdatePreview(); } };
+
+        _presetSaveAs.Text = "Сохранить как…";
+        _presetSaveAs.Location = new Point(PrevX, 512);
+        _presetSaveAs.Size = new Size(150, 26);
+        _presetSaveAs.Click += (_, _) => OnPresetSaveAs();
+
+        _presetBuiltin.Text = "Вернуть встроенный";
+        _presetBuiltin.Location = new Point(PrevX + 158, 512);
+        _presetBuiltin.Size = new Size(190, 26);
+        _presetBuiltin.Click += (_, _) => OnPresetBuiltin();
+
+        _presetDelete.Text = "Удалить";
+        _presetDelete.Location = new Point(PrevX + 356, 512);
+        _presetDelete.Size = new Size(124, 26);
+        _presetDelete.Click += (_, _) => OnPresetDelete();
+
+        Controls.Add(_paramsTitle);
+        Controls.Add(_params);
+        Controls.Add(_sceneResetAll);
+        Controls.Add(_presetSaveAs);
+        Controls.Add(_presetBuiltin);
+        Controls.Add(_presetDelete);
+    }
+
     private void BuildBottom()
     {
         _save.Text = "Сохранить";
@@ -335,11 +410,7 @@ internal sealed class SettingsForm : Form
         _favWeight.Value = Clamp(c.Shuffle.FavoriteWeight, 1, 10);
         _presetFavOnly.Checked = c.Filters.FavoritesOnly;
 
-        _activePreset.Items.Clear();
-        _activePreset.Items.Add(new Choice(FiltersConfig.ShuffleActive, "случайный (shuffle)"));
-        foreach (var name in _model.PresetNames) _activePreset.Items.Add(new Choice(name, name));
-        int ai = _activePreset.Items.Cast<Choice>().ToList().FindIndex(ch => string.Equals(ch.Value, c.Filters.Active, StringComparison.OrdinalIgnoreCase));
-        _activePreset.SelectedIndex = Math.Max(0, ai);
+        FillActiveCombo(c.Filters.Active);
 
         _shufScenes.Checked = c.Shuffle.Scenes;
         _shufPresets.Checked = c.Shuffle.Presets;
@@ -349,6 +420,8 @@ internal sealed class SettingsForm : Form
         _perMonitor.Checked = c.Shuffle.PerMonitor;
         _beatSync.Checked = c.Shuffle.BeatSync;
         _overlayPct.Value = Clamp(c.Overlay.Probability * 100, 0, 100);
+        _trail.Value = Math.Clamp(c.Screen.Trail, 0f, 0.9f);
+        ShowTrail();
 
         _dimEnabled.Checked = c.Dimmer.Enabled;
         _dimDelay.Value = Clamp(c.Dimmer.DelayMin, 0, 240);
@@ -377,6 +450,7 @@ internal sealed class SettingsForm : Form
         c.Shuffle.PerMonitor = _perMonitor.Checked;
         c.Shuffle.BeatSync = _beatSync.Checked;
         c.Overlay.Probability = (double)_overlayPct.Value / 100.0;
+        c.Screen.Trail = _trail.Value;
 
         c.Dimmer.Enabled = _dimEnabled.Checked;
         c.Dimmer.DelayMin = (float)_dimDelay.Value;
@@ -444,10 +518,432 @@ internal sealed class SettingsForm : Form
     {
         if (_previewScene.Length == 0 && _model.SceneIds.Count > 0)
             _previewScene = _model.SceneIds.FirstOrDefault(id => _model.GetScene(id) != Pick.Off) ?? _model.SceneIds[0];
-        string? chosen = (_activePreset.SelectedItem as Choice)?.Value;
+        // Редактируемый пресет (из списка или активный) — его и показываем; shuffle — как раньше
+        string? chosen = _editPreset ?? (_activePreset.SelectedItem as Choice)?.Value;
         string? preset = _model.PreviewPreset(chosen);
         _previewCaption.Text = $"превью · {_previewScene} · {preset ?? "—"}";
         if (_previewScene.Length > 0) _preview.Request(_previewScene, preset);
+        if (CurrentParamsKey() != _paramsKey) RebuildParams();
+    }
+
+    private string CurrentParamsKey() => $"{_tabs.SelectedIndex}|{_previewScene}|{_editPreset}";
+
+    private string? ActivePresetName()
+    {
+        string? active = _model.Config.Filters.Active;
+        return string.Equals(active, FiltersConfig.ShuffleActive, StringComparison.OrdinalIgnoreCase) ? null : _model.PresetKey(active ?? "");
+    }
+
+    /// <summary>
+    /// Комбобокс «активный фильтр»: shuffle и все пресеты. Выбор: прежний (если ещё есть), иначе preferred, иначе первый.
+    /// </summary>
+    private void FillActiveCombo(string? preferred)
+    {
+        bool was = _loading;
+        _loading = true;
+        try
+        {
+            string? cur = (_activePreset.SelectedItem as Choice)?.Value;
+            _activePreset.Items.Clear();
+            _activePreset.Items.Add(new Choice(FiltersConfig.ShuffleActive, "случайный (shuffle)"));
+            foreach (var name in _model.PresetNames) _activePreset.Items.Add(new Choice(name, name));
+            int idx = IndexOfChoice(cur);
+            if (idx < 0) idx = IndexOfChoice(preferred);
+            _activePreset.SelectedIndex = Math.Max(0, idx);
+        }
+        finally { _loading = was; }
+    }
+
+    private int IndexOfChoice(string? value) =>
+        value is null ? -1 : _activePreset.Items.Cast<Choice>().ToList().FindIndex(ch => string.Equals(ch.Value, value, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Выбор в комбобоксе «активный»: пресет становится редактируемым (и выделяется в списке).</summary>
+    private void OnActivePresetChanged()
+    {
+        string? chosen = (_activePreset.SelectedItem as Choice)?.Value;
+        if (chosen is null || string.Equals(chosen, FiltersConfig.ShuffleActive, StringComparison.OrdinalIgnoreCase))
+        {
+            _editPreset = null;
+            UpdatePreview();
+            return;
+        }
+        _presets.SelectId(chosen);
+        _editPreset = _presets.SelectedId ?? chosen;
+        UpdatePreview();
+    }
+
+    /// <summary>Выделение в списке «Фильтры»: пресет становится редактируемым.</summary>
+    private void OnPresetsSelection()
+    {
+        _editPreset = _presets.SelectedId;
+        UpdatePreview();
+    }
+
+    private void RebuildParams()
+    {
+        _paramsKey = CurrentParamsKey();
+        _params.Clear();
+        bool scenesTab = _tabs.SelectedIndex == 0;
+        bool filtersTab = _tabs.SelectedIndex == 1;
+        _paramsTitle.Visible = _params.Visible = scenesTab || filtersTab;
+        _sceneResetAll.Visible = scenesTab;
+        foreach (var b in new[] { _presetSaveAs, _presetBuiltin, _presetDelete }) b.Visible = filtersTab;
+        if (scenesTab) BuildSceneRows();
+        else if (filtersTab) BuildFilterRows();
+    }
+
+    private void BuildSceneRows()
+    {
+        string id = _previewScene;
+        _paramsTitle.Text = $"Параметры сцены «{id}»";
+        var specs = id.Length > 0 ? _model.SceneSpecs(id) : null;
+        _sceneResetAll.Enabled = specs is { Count: > 0 };
+        if (specs is null || specs.Count == 0)
+        {
+            _labelCol = LabelColumn(Array.Empty<string>());
+            _params.AddRow(NoteRow("у этой сцены нет настроек"));
+            return;
+        }
+        _labelCol = LabelColumn(specs.Select(s => LabelText(s.Name, s.Description)));
+        foreach (var spec in specs) _params.AddRow(SceneParamRow(id, spec));
+    }
+
+    private void BuildFilterRows()
+    {
+        string? name = _editPreset;
+        RefreshFilterTitle();
+        bool any = name is not null;
+        _presetSaveAs.Enabled = any;
+        _presetBuiltin.Enabled = any && _model.IsBuiltinPreset(name!);
+        _presetDelete.Enabled = any && !_model.IsBuiltinPreset(name!) && _model.PresetNames.Count > 1;
+        if (name is null)
+        {
+            _labelCol = LabelColumn(Array.Empty<string>());
+            _params.AddRow(NoteRow("выберите пресет в списке (или активный — не shuffle)"));
+            return;
+        }
+        var stages = _model.PresetStages(name);
+        _labelCol = LabelColumn(stages.SelectMany(st => st.Params).Select(p => LabelText(p.Name, p.Description)));
+        foreach (var st in stages)
+        {
+            _params.AddRow(HeaderRow($"{st.Id}  ·  {StageHumanName(st.Id)}"));
+            if (st.Params.Count == 0)
+            {
+                _params.AddRow(NoteRow("без настроек"));
+                continue;
+            }
+            foreach (var spec in st.Params) _params.AddRow(FilterParamRow(name, st.Index, spec));
+        }
+    }
+
+    /// <summary>Подпись параметра для пользователя: Description из спецификации, без него — техническое имя.</summary>
+    private static string LabelText(string name, string description) => description.Trim().Length > 0 ? description.Trim() : name;
+
+    /// <summary>
+    /// Ширина колонки подписей: по самой длинной подписи, но не больше 55% панели (ползунок остаётся).
+    /// Подписи длиннее колонки обрезаются с «…», полный текст — в подсказке.
+    /// </summary>
+    private static int LabelColumn(IEnumerable<string> texts)
+    {
+        int max = 0;
+        foreach (var t in texts) max = Math.Max(max, TextRenderer.MeasureText(t, Theme.Mono).Width);
+        return Math.Min(MaxLabelCol, max + 16);
+    }
+
+    private static string Ellipsize(string text, int maxW)
+    {
+        if (TextRenderer.MeasureText(text, Theme.Mono).Width <= maxW) return text;
+        string s = text;
+        while (s.Length > 1 && TextRenderer.MeasureText(s + "…", Theme.Mono).Width > maxW) s = s[..^1];
+        return s + "…";
+    }
+
+    /// <summary>Разница значений с точностью, с которой значения хранятся в конфиге (3 знака).</summary>
+    private static bool Differs(double a, double b) => Math.Abs(Math.Round(a, 3) - Math.Round(b, 3)) > 1e-9;
+
+    private void RefreshFilterTitle()
+    {
+        string? name = _editPreset;
+        _paramsTitle.Text = name is null
+            ? "Параметры фильтра"
+            : $"Параметры фильтра «{name}»" + (_model.IsPresetModified(name) ? "  изменён*" : "");
+    }
+
+    /// <summary>Человеческое имя стадии для заголовка (если известно).</summary>
+    private static string StageHumanName(string id) => id switch
+    {
+        "crt" => "кинескоп",
+        "phosphor" => "люминофор",
+        "vhs" => "видеокассета",
+        "tv" => "телевизор (PAL / SECAM / NTSC)",
+        "chroma" => "хрома-аберрация",
+        "mono" => "монохром (символы)",
+        _ => "",
+    };
+
+    private static Panel NewRow() => new() { BackColor = Theme.Bg };
+
+    private static Panel NoteRow(string text)
+    {
+        var row = NewRow();
+        var note = new Label { Text = text, AutoSize = true, Location = new Point(0, 4) };
+        row.Controls.Add(note);
+        Theme.Apply(row);
+        note.ForeColor = Theme.Muted;
+        return row;
+    }
+
+    private static Panel HeaderRow(string text)
+    {
+        var row = NewRow();
+        var head = new Label { Text = text, AutoSize = true, Location = new Point(0, 4) };
+        head.Tag = new Font(Theme.Mono, FontStyle.Bold);
+        row.Controls.Add(head);
+        Theme.Apply(row);
+        head.ForeColor = Theme.Accent;
+        return row;
+    }
+
+    /// <summary>Строка параметра: подпись, контрол, значение, «↺» (по умолчанию). Контрол и значение задаёт вызывающий.</summary>
+    /// <summary>
+    /// Строка: подпись (Description, обрезается с «…»; в подсказке — полный текст и техническое имя), место под контрол
+    /// (слева от значения, x = _labelCol), значение и кнопка «по умолчанию» справа.
+    /// </summary>
+    private (Panel Row, Label Value, ResetButton Reset) ParamRow(string name, string description)
+    {
+        var row = NewRow();
+        string text = LabelText(name, description);
+        var label = new Label
+        {
+            Text = Ellipsize(text, _labelCol - 12),
+            AutoSize = false,
+            Size = new Size(_labelCol - 8, 20),
+            Location = new Point(0, 4),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        _tip.SetToolTip(label, text == name ? name : $"{text}\n({name})");
+        var value = new Label { AutoSize = false, Size = new Size(ValueW, 20), Location = new Point(ValueX, 4), TextAlign = ContentAlignment.MiddleRight };
+        var reset = new ResetButton { Size = new Size(28, 22), Location = new Point(ResetX, 3) };
+        row.Controls.Add(label);
+        row.Controls.Add(value);
+        row.Controls.Add(reset);
+        return (row, value, reset);
+    }
+
+    /// <summary>Место под контрол параметра: от колонки подписей до колонки значения.</summary>
+    private Size ControlSize(int height) => new(Math.Max(60, ControlEnd - _labelCol), height);
+
+    private static string FormatNumber(double v, double min, double max, bool integer)
+    {
+        if (integer) return ((int)Math.Round(v)).ToString(CultureInfo.InvariantCulture);
+        double span = Math.Abs(max - min);
+        string fmt = span <= 2 ? "0.00" : span <= 50 ? "0.0" : "0";
+        return v.ToString(fmt, CultureInfo.InvariantCulture);
+    }
+
+    private Panel SceneParamRow(string sceneId, SceneParamSpec spec)
+    {
+        var (row, value, reset) = ParamRow(spec.Name, spec.Description);
+        double v = _model.SceneParamValue(sceneId, spec);
+        string def;
+        Control control;
+        switch (spec.Kind)
+        {
+            case SceneParamKind.Bool:
+                var check = new CheckBox { Text = "", AutoSize = true, Location = new Point(_labelCol, 4), Checked = v >= 0.5 };
+                value.Text = check.Checked ? "вкл" : "выкл";
+                check.CheckedChanged += (_, _) =>
+                {
+                    _model.SetSceneParam(sceneId, spec, check.Checked ? 1 : 0);
+                    value.Text = check.Checked ? "вкл" : "выкл";
+                    reset.Enabled = Differs(check.Checked ? 1 : 0, spec.Default);
+                    OnParamEdited();
+                };
+                reset.Click += (_, _) => { _model.ResetSceneParam(sceneId, spec); check.Checked = spec.Default >= 0.5; };
+                control = check;
+                def = spec.Default >= 0.5 ? "вкл" : "выкл";
+                reset.Enabled = Differs(v, spec.Default);
+                break;
+            case SceneParamKind.Choice:
+                var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ControlSize(24) };
+                combo.Items.AddRange(spec.Options ?? Array.Empty<string>());
+                combo.SelectedIndex = Math.Clamp((int)Math.Round(v), 0, Math.Max(0, combo.Items.Count - 1));
+                combo.SelectedIndexChanged += (_, _) =>
+                {
+                    if (combo.SelectedIndex < 0) return;
+                    _model.SetSceneParam(sceneId, spec, combo.SelectedIndex);
+                    reset.Enabled = Differs(combo.SelectedIndex, spec.Default);
+                    OnParamEdited();
+                };
+                reset.Click += (_, _) => { _model.ResetSceneParam(sceneId, spec); combo.SelectedIndex = (int)Math.Round(spec.Default); };
+                control = combo;
+                def = spec.Options is { Length: > 0 } so ? so[Math.Clamp((int)Math.Round(spec.Default), 0, so.Length - 1)] : "";
+                reset.Enabled = Differs(combo.SelectedIndex, spec.Default);
+                value.Text = "";
+                break;
+            default:
+                bool integer = spec.Kind == SceneParamKind.Int;
+                var slider = new SliderBox { Minimum = spec.Min, Maximum = spec.Max, Integer = integer, Location = new Point(_labelCol, 2), Size = ControlSize(24) };
+                slider.Value = (float)v;
+                value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, integer);
+                slider.ValueChanged += (_, _) =>
+                {
+                    _model.SetSceneParam(sceneId, spec, slider.Value);
+                    value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, integer);
+                    reset.Enabled = Differs(slider.Value, spec.Default);
+                    OnParamEdited();
+                };
+                reset.Click += (_, _) =>
+                {
+                    _model.ResetSceneParam(sceneId, spec);
+                    slider.Value = spec.Default;
+                    value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, integer);
+                    reset.Enabled = false;
+                    OnParamEdited();
+                };
+                control = slider;
+                def = FormatNumber(spec.Default, spec.Min, spec.Max, integer);
+                reset.Enabled = Differs(slider.Value, spec.Default);
+                break;
+        }
+        row.Controls.Add(control);
+        FinishParamRow(row, value, reset, "по умолчанию: " + def);
+        return row;
+    }
+
+    private Panel FilterParamRow(string preset, int stage, ParamSpec spec)
+    {
+        var (row, value, reset) = ParamRow(spec.Name, spec.Description);
+        double v = _model.PresetParamValue(preset, stage, spec);
+        Control control;
+        string def;
+        if (spec.Options is { Length: > 0 } opts)
+        {
+            var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ControlSize(24) };
+            combo.Items.AddRange(opts);
+            combo.SelectedIndex = Math.Clamp((int)Math.Round(v), 0, opts.Length - 1);
+            combo.SelectedIndexChanged += (_, _) =>
+            {
+                if (combo.SelectedIndex < 0) return;
+                _model.SetPresetParam(preset, stage, spec, combo.SelectedIndex);
+                reset.Enabled = Differs(combo.SelectedIndex, spec.Default);
+                OnParamEdited();
+            };
+            reset.Click += (_, _) => { _model.SetPresetParam(preset, stage, spec, spec.Default); combo.SelectedIndex = (int)Math.Round(spec.Default); };
+            control = combo;
+            def = opts[Math.Clamp((int)Math.Round(spec.Default), 0, opts.Length - 1)];
+            reset.Enabled = Differs(combo.SelectedIndex, spec.Default);
+            value.Text = "";
+        }
+        else
+        {
+            var slider = new SliderBox { Minimum = spec.Min, Maximum = spec.Max, Location = new Point(_labelCol, 2), Size = ControlSize(24) };
+            slider.Value = (float)v;
+            value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, false);
+            slider.ValueChanged += (_, _) =>
+            {
+                _model.SetPresetParam(preset, stage, spec, slider.Value);
+                value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, false);
+                reset.Enabled = Differs(slider.Value, spec.Default);
+                OnParamEdited();
+            };
+            reset.Click += (_, _) =>
+            {
+                _model.SetPresetParam(preset, stage, spec, spec.Default);
+                slider.Value = spec.Default;
+                value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, false);
+                reset.Enabled = false;
+                OnParamEdited();
+            };
+            control = slider;
+            def = FormatNumber(spec.Default, spec.Min, spec.Max, false);
+            reset.Enabled = Differs(slider.Value, spec.Default);
+        }
+        row.Controls.Add(control);
+        FinishParamRow(row, value, reset, "по умолчанию: " + def);
+        return row;
+    }
+
+    /// <summary>Общая отделка строки: стиль темы, цвет значения, подсказка у «по умолчанию».</summary>
+    private void FinishParamRow(Panel row, Label value, ResetButton reset, string resetTip)
+    {
+        Theme.Apply(row);
+        value.ForeColor = Theme.Muted;
+        _tip.SetToolTip(reset, resetTip);
+    }
+
+    /// <summary>Любая правка параметра: конфиг уже обновлён в модели; превью перезапустится (debounce), список и заголовок — в актуальное состояние.</summary>
+    private void OnParamEdited()
+    {
+        _presets.Invalidate();
+        if (_tabs.SelectedIndex == 1) RefreshFilterTitle();
+        UpdatePreview();
+    }
+
+
+    private void OnPresetSaveAs()
+    {
+        if (_editPreset is null) return;
+        string source = _editPreset;
+        string? name = NameDialog.Ask(this, "Имя нового пресета (латиница, цифры, дефис):", source + "-2", _model.ValidatePresetName);
+        if (name is null) return;
+        var problem = _model.SaveAsPreset(source, name);
+        if (problem is not null)
+        {
+            MessageBox.Show(this, problem, "PHOSPHOR", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        RefreshPresetLists(name);
+    }
+
+    private void OnPresetBuiltin()
+    {
+        if (_editPreset is null) return;
+        if (!_model.RestoreBuiltinPreset(_editPreset)) return;
+        _presets.Invalidate();
+        RebuildParams();
+        UpdatePreview();
+    }
+
+    private void OnPresetDelete()
+    {
+        if (_editPreset is null) return;
+        string name = _editPreset;
+        if (MessageBox.Show(this, $"Удалить пресет «{name}»?", "PHOSPHOR", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        if (!_model.DeletePreset(name))
+        {
+            MessageBox.Show(this, "Этот пресет нельзя удалить (встроенный или последний).", "PHOSPHOR", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        string? first = _model.PresetNames.FirstOrDefault();
+        RefreshPresetLists(first);
+    }
+
+    /// <summary>После «Сохранить как» / «Удалить»: обновить комбобокс и список, выделить select.</summary>
+    private void RefreshPresetLists(string? select)
+    {
+        FillActiveCombo(_model.Config.Filters.Active);
+        _presets.Fill(_model.PresetNames);
+        if (select is not null) _presets.SelectId(select);
+        _editPreset = _presets.SelectedId;
+        _paramsKey = "";
+        UpdatePreview();
+    }
+
+    /// <summary>Закрытие без «Сохранить»: если пресеты изменены и не записаны в файл — спросить.</summary>
+    private void OnFormClosing(object? sender, FormClosingEventArgs e)
+    {
+        if (DialogResult != DialogResult.OK && _model.HasUnwrittenPresetChanges())
+        {
+            var answer = MessageBox.Show(this, "Изменения пресетов не записаны в phosphor.json. Закрыть без сохранения?",
+                "PHOSPHOR", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (answer == DialogResult.No)
+            {
+                e.Cancel = true;
+                return;
+            }
+        }
+        _preview.Stop();
     }
 
     private void StartProbe()
@@ -773,14 +1269,17 @@ internal sealed class PickList : Control
 
     private readonly Func<string, Pick> _stateOf;
     private readonly Action<string> _cycle;
+    private readonly Func<string, bool>? _modified;
     private readonly List<string> _ids = new();
     private readonly ListScroll _scroll = new();
     private bool _dragBar;
 
-    public PickList(Func<string, Pick> stateOf, Action<string> cycle)
+    /// <param name="modified">Пометка «изменён*» у строки (пресеты); null — без пометки.</param>
+    public PickList(Func<string, Pick> stateOf, Action<string> cycle, Func<string, bool>? modified = null)
     {
         _stateOf = stateOf;
         _cycle = cycle;
+        _modified = modified;
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.Selectable, true);
         BackColor = Theme.Panel;
         ForeColor = Theme.Text;
@@ -806,6 +1305,15 @@ internal sealed class PickList : Control
         _ids.AddRange(ids);
         _scroll.SetCount(_ids.Count);
         Sync();
+        Invalidate();
+    }
+
+    /// <summary>Выделить строку по id (без учёта регистра), если она есть.</summary>
+    public void SelectId(string id)
+    {
+        int i = _ids.FindIndex(x => string.Equals(x, id, StringComparison.OrdinalIgnoreCase));
+        if (i < 0) return;
+        SetSelection(i);
         Invalidate();
     }
 
@@ -850,6 +1358,9 @@ internal sealed class PickList : Control
             TextRenderer.DrawText(g, glyph, Theme.Glyph, new Rectangle(PadL, rect.Y, 24, RowH), glyphColor, flags);
             TextRenderer.DrawText(g, id, Theme.Mono, new Rectangle(PadL + 30, rect.Y, rowsW - PadL - 36, RowH),
                 pick == Pick.Off ? Theme.Muted : Theme.Text, flags);
+            if (_modified?.Invoke(id) == true)
+                TextRenderer.DrawText(g, "изменён*", Theme.Mono, new Rectangle(rowsW - 90, rect.Y, 84, RowH), Theme.Accent,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
         }
 
         if (HasBar)
@@ -977,16 +1488,21 @@ internal sealed class PickList : Control
 internal sealed class SettingsPreview : Panel
 {
     private readonly bool _live;
+    private readonly PhosphorConfig _config;
     private readonly Log _log;
     private readonly WinTimer _debounce = new() { Interval = 300 };
+    /// <summary>Текущий конфиг во временном файле превью (%TEMP%\phosphor-preview-&lt;pid&gt;.json).</summary>
+    private readonly string _tempConfig = Path.Combine(Path.GetTempPath(), $"phosphor-preview-{Environment.ProcessId}.json");
     private string? _scene;
     private string? _preset;
     private Process? _proc;
     private string? _runningArgs;
+    private string _lastJson = "";
 
-    public SettingsPreview(bool live, Log log)
+    public SettingsPreview(bool live, PhosphorConfig config, Log log)
     {
         _live = live;
+        _config = config;
         _log = log;
         BackColor = Theme.Panel;
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
@@ -1002,11 +1518,30 @@ internal sealed class SettingsPreview : Panel
         _debounce.Start();
     }
 
+    /// <summary>
+    /// Перезапуск превью: если конфиг изменился с прошлого запуска — пишем текущий конфиг во временный файл и
+    /// запускаем процесс с --config (любое изменение в окне видно в превью). Иначе — только если сменилась сцена или пресет.
+    /// </summary>
     private void Start()
     {
         if (IsDisposed || _scene is null) return;
-        var args = SettingsModel.PreviewArguments(Handle, _scene, _preset);
-        if (args == _runningArgs && _proc is { HasExited: false }) return;
+        string json = SettingsJson.Serialize(_config);
+        bool cfgChanged = json != _lastJson;
+        var args = SettingsModel.PreviewArguments(Handle, _scene, _preset, _tempConfig);
+        if (!cfgChanged && args == _runningArgs && _proc is { HasExited: false }) return;
+        if (cfgChanged)
+        {
+            try
+            {
+                File.WriteAllText(_tempConfig, json, new System.Text.UTF8Encoding(false));
+                _lastJson = json;
+            }
+            catch (Exception e)
+            {
+                _log.Warn("превью: не записан временный конфиг: " + e.Message);
+                return;
+            }
+        }
         Kill();
         var exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "Phosphor.exe");
         try
@@ -1023,10 +1558,13 @@ internal sealed class SettingsPreview : Panel
         Invalidate();
     }
 
+    /// <summary>Остановить превью и удалить временный конфиг.</summary>
     public void Stop()
     {
         _debounce.Stop();
         Kill();
+        try { File.Delete(_tempConfig); }
+        catch (Exception) { /* уже нет или занят — не важно */ }
     }
 
     private void Kill()

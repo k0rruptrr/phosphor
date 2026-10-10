@@ -7,8 +7,15 @@ namespace Phosphor.Scenes;
 /// Вращающийся 3D-тор из символов в духе donut.c (Andy Sloane, a1k0n.net/2011/07/20/donut-math.html).
 /// Z-буфер по 1/z, освещение по нормали, яркость → символ рампы.
 /// </summary>
-public sealed class TorusScene : IScene, IAudioReactive
+public sealed class TorusScene : IScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec RateXSpec = new("rateX", SceneParamKind.Float, 0.9f, 0f, 4f, "вращение вокруг X, рад/с");
+    public static readonly SceneParamSpec RateZSpec = new("rateZ", SceneParamKind.Float, 0.5f, 0f, 4f, "вращение вокруг Z, рад/с");
+    private static readonly SceneParamSpec[] ParamList = { RateXSpec, RateZSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
     private const float R1 = 1f;
     private const float R2Base = 2f;
     private const float K2 = 5f;
@@ -25,8 +32,6 @@ public sealed class TorusScene : IScene, IAudioReactive
     /// <summary>Максимальный шаг по φ, рад (ограничение, чтобы не пропускать узкие видимые дуги).</summary>
     private const float MaxPhiStep = 0.3f;
 
-    private const float BaseRateA = 0.9f;   // рад/с, вокруг X
-    private const float BaseRateB = 0.5f;   // рад/с, вокруг Z
 
     private const float TwoPi = MathF.PI * 2f;
     private const float TransitionTime = 1.5f;   // «спотыкание»: плавная смена скоростей
@@ -166,8 +171,8 @@ public sealed class TorusScene : IScene, IAudioReactive
         _tag = new int[cells];
 
         float speed = MathF.Max(0f, options.Speed);
-        _baseRateA = BaseRateA * speed;
-        _baseRateB = BaseRateB * speed;
+        _baseRateA = Math.Clamp(options.GetFloat(RateXSpec.Name, RateXSpec.Default), RateXSpec.Min, RateXSpec.Max) * speed;
+        _baseRateB = Math.Clamp(options.GetFloat(RateZSpec.Name, RateZSpec.Default), RateZSpec.Min, RateZSpec.Max) * speed;
         _rateA = _toA = _fromA = _baseRateA;
         _rateB = _toB = _fromB = _baseRateB;
         _transT = TransitionTime;

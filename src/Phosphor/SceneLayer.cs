@@ -17,14 +17,17 @@ internal sealed class SceneLayer : IDisposable
     private readonly RenderTarget _rt;
     private FilterChain _chain = null!;
     private readonly Dictionary<string, long> _dataVersions = new();
-    /// <summary>OSD видика поверх кассеты. Тикает всегда, рисуется только при _vcrOn (пресет с vhs).</summary>
-    private readonly IOverlay? _vcr;
+    /// <summary>Пресет этой сцены с стадией vhs: видик монитора накладывается на её выход (OSD — MonitorSlot).</summary>
     private bool _vcrOn;
 
     public IScene Scene { get; }
     public IOverlay? Overlay { get; }
     public string PresetName { get; private set; } = "";
     public CharGrid Grid => _grid;
+    /// <summary>Вывод сцены до фильтров (сюда накладывается OSD видика).</summary>
+    public RenderTarget Target => _rt;
+    /// <summary>Пресет с vhs — видику монитора нужно быть включённым.</summary>
+    public bool VcrOn => _vcrOn;
     public uint Output { get; private set; }
     /// <summary>Сколько секунд сцена на экране.</summary>
     public float Age { get; private set; }
@@ -56,13 +59,6 @@ internal sealed class SceneLayer : IDisposable
         {
             Overlay = make();
             Overlay.Init(cols, rows, new Random(s.Rng.Next()));
-        }
-
-        // OSD видика не берёт rng, чтобы не сдвигать последовательность для остальных слоёв
-        if (s.Config.Overlay.Vcr && s.Overlays.TryGetValue("vcr", out var makeVcr))
-        {
-            _vcr = makeVcr();
-            _vcr.Init(cols, rows, new Random(index));
         }
 
         SetPreset(preset);
@@ -113,8 +109,8 @@ internal sealed class SceneLayer : IDisposable
 
         _chain = new FilterChain(_s.Gl, _s.Filters, stages, _rt.Width, _rt.Height);
         PresetName = name;
-        // Проверка при каждой смене пресета: OSD видика только для цепочки с vhs
-        _vcrOn = _vcr is not null && _s.Config.Overlay.VcrFor(_chain.FilterIds);
+        // Проверка при каждой смене пресета: видик только для цепочки с vhs
+        _vcrOn = _s.Config.Overlay.VcrFor(_chain.FilterIds);
         foreach (var w in warnings.Concat(_chain.Warnings)) _s.Log.Warn($"[{_index}] пресет {name}: {w}");
         _s.Log.Info($"[{_index}] пресет {name}: {string.Join(" → ", gridIds.Concat(_chain.FilterIds))}");
     }
@@ -134,28 +130,31 @@ internal sealed class SceneLayer : IDisposable
         }
     }
 
-    public void Tick(float dt, float time, long frame, in AudioFrame audio, in Organism organism, int monitorCount)
+    /// <summary>Шаг сцены: обновить и нарисовать сетку в Target. Фильтры — отдельно (Filter), между ними — OSD видика.</summary>
+    public void Render(float dt, long frame, in AudioFrame audio, in Organism organism, int monitorCount)
     {
         Age += dt;
         DeliverData();
         if (Scene is IAudioReactive ar) ar.OnAudio(audio);
         Scene.Update(dt);
         Scene.Draw(_grid);
-        _vcr?.Update(dt);
-        if (Overlay is not null || _vcrOn)
+        if (Overlay is not null)
         {
-            Overlay?.Update(dt);
+            Overlay.Update(dt);
             _s.Data.TryGet("clock", out var clk, out _);
             var ctx = new OverlayContext(Scene.Id, PresetName, _index, monitorCount, _s.Fps, frame,
                 (clk as ClockSnapshot)?.Local, audio, organism);
-            Overlay?.Apply(_grid, ctx);
-            // После основного оверлея (HUD) — OSD видика
-            if (_vcrOn) _vcr!.Apply(_grid, ctx);
+            Overlay.Apply(_grid, ctx);
         }
         // После оверлея: HUD тоже становится монохромным, как и всё на этом «экране»
         if (_gridPasses.Count > 0 && _font.Atlas is IGlyphCoverage cov)
             foreach (var pass in _gridPasses) pass.Apply(_grid, cov);
         _font.Renderer.Render(_grid, _rt);
+    }
+
+    /// <summary>Шаг фильтров: цепочка над Target (уже с OSD видика, если он нужен). Результат — Output.</summary>
+    public void Filter(float time, float dt, long frame, in AudioFrame audio, in Organism organism)
+    {
         var fi = new FrameInfo(time, dt, frame, _rt.Width, _rt.Height, _index, audio, organism);
         Output = _chain.Process(_rt.Texture, fi);
     }

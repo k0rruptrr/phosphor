@@ -1,6 +1,7 @@
 using Phosphor.Core;
 using Phosphor.Data;
 using Phosphor.Gfx;
+using Phosphor.Overlays;
 using Phosphor.Text;
 using Silk.NET.OpenGL;
 
@@ -67,6 +68,9 @@ internal sealed class MonitorSlot : IDisposable
     private SceneLayer _current;
     private SceneLayer? _incoming;
     private RenderTarget? _composite;
+    /// <summary>Видик монитора: одна лента на весь монитор, от старта заставки через все сцены. Null — если видика нет в конфиге.</summary>
+    private readonly VcrOverlay? _vcr;
+    private OsdLayer? _osd;
     private TransitionKind _kind;
     private float _transT, _transDur;
 
@@ -84,6 +88,14 @@ internal sealed class MonitorSlot : IDisposable
         _defaultCellHeight = defaultCellHeight;
         VpX = vpX; VpY = vpY; VpW = vpW; VpH = vpH;
         _current = new SceneLayer(s, index, vpW, vpH, sceneId, preset, defaultCellHeight, overlayId, null);
+
+        // OSD видика не берёт rng, чтобы не сдвигать последовательность для остальных слоёв
+        if (s.Config.Overlay.Vcr && s.Overlays.TryGetValue("vcr", out var makeVcr) && makeVcr() is VcrOverlay vcr)
+        {
+            _vcr = vcr;
+            _osd = new OsdLayer(s, vpW, vpH);
+            _vcr.Init(_osd.Cols, _osd.Rows, new Random(index));
+        }
     }
 
     /// <summary>Начать смену сцены. Cut — мгновенно. handoff — передать новой сцене последний кадр старой.</summary>
@@ -136,18 +148,43 @@ internal sealed class MonitorSlot : IDisposable
         _current = new SceneLayer(_s, Index, vpW, vpH, id, preset, _defaultCellHeight, ov, null);
         _composite?.Dispose();
         _composite = null;
+        // OSD — под новый размер окна; состояние ленты (_vcr) сохраняется
+        if (_vcr is not null)
+        {
+            _osd?.Dispose();
+            _osd = new OsdLayer(_s, vpW, vpH);
+        }
     }
 
     public void Tick(float dt, float time, long frame, in AudioFrame audio, in Organism organism, int monitorCount)
     {
-        _current.Tick(dt, time, frame, audio, organism, monitorCount);
+        _current.Render(dt, frame, audio, organism, monitorCount);
+        if (InTransition) _incoming?.Render(dt, frame, audio, organism, monitorCount);
+
+        // Видик — один на монитор: лента идёт всегда. OSD кладётся на тот слой, у которого видик включён
+        // (во время перехода входящий — приоритетнее), один раз, до фильтров слоя.
+        if (_vcr is not null && _osd is not null)
+        {
+            SceneLayer? owner = _incoming is { VcrOn: true } ? _incoming : _current.VcrOn ? _current : null;
+            _vcr.SetOn(owner is not null);
+            _vcr.Update(dt);
+            if (owner is not null)
+            {
+                _s.Data.TryGet("clock", out var clk, out _);
+                var ctx = new OverlayContext(owner.Scene.Id, owner.PresetName, Index, monitorCount, _s.Fps, frame,
+                    (clk as ClockSnapshot)?.Local, audio, organism);
+                _osd.Compose(owner.Target, _vcr, ctx);
+            }
+        }
+
+        _current.Filter(time, dt, frame, audio, organism);
         if (!InTransition)
         {
             Output = _current.Output;
             return;
         }
 
-        _incoming?.Tick(dt, time, frame, audio, organism, monitorCount);
+        _incoming?.Filter(time, dt, frame, audio, organism);
         _transT += dt;
         _composite ??= new RenderTarget(_s.Gl, VpW, VpH);
         float p = Math.Clamp(_transT / _transDur, 0f, 1f);
@@ -161,5 +198,6 @@ internal sealed class MonitorSlot : IDisposable
         _incoming?.Dispose();
         _current.Dispose();
         _composite?.Dispose();
+        _osd?.Dispose();
     }
 }

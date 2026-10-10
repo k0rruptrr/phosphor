@@ -8,8 +8,17 @@ namespace Phosphor.Scenes;
 /// «Телетайп»: заголовки информационных агентств печатаются посимвольно, как на ленте в аппаратной.
 /// Данные (новости, часы) приходят готовыми от хоста; сцена сама в сеть не ходит.
 /// </summary>
-public sealed class TeletypeScene : IScene, IDataScene, IAudioReactive
+public sealed class TeletypeScene : IScene, IDataScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec IdleSpec = new("idleSec", SceneParamKind.Float, 30f, 5f, 120f, "пауза перед повтором ленты, с");
+    public static readonly SceneParamSpec GapSpec = new("gapSec", SceneParamKind.Float, 1.5f, 0f, 10f, "пауза между новостями, с");
+    private static readonly SceneParamSpec[] ParamList = { IdleSpec, GapSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _idleLen, _gapSec;
+
     private const string HeaderTitle = "ТЕЛЕТАЙП · ЛЕНТА ИНФОРМАЦИОННЫХ АГЕНТСТВ";
     private const string HeaderLine = "ЛИНИЯ 3";
     private const string Separator = "- - - - -";
@@ -37,8 +46,6 @@ public sealed class TeletypeScene : IScene, IDataScene, IAudioReactive
     private const int PrefixWidth = 20;
     private const int MaxNews = 60;
     private const float DingLen = 0.15f;
-    private const float IdleLen = 30f;
-    private const float GapLen = 1.5f;
     private const float FlashLen = 0.1f;
     private const float StallLen = 0.2f;
     private const float DotsLen = 2f;
@@ -110,6 +117,8 @@ public sealed class TeletypeScene : IScene, IDataScene, IAudioReactive
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _idleLen = Math.Clamp(options.GetFloat(IdleSpec.Name, IdleSpec.Default), IdleSpec.Min, IdleSpec.Max);
+        _gapSec = Math.Clamp(options.GetFloat(GapSpec.Name, GapSpec.Default), GapSpec.Min, GapSpec.Max);
         // Внутренняя сетка — без безопасной зоны; Draw переносит её в grid со смещением.
         _cols = Math.Max(1, cols - 2 * OffX);
         _rows = Math.Max(1, rows - 2 * OffY);
@@ -211,7 +220,7 @@ public sealed class TeletypeScene : IScene, IDataScene, IAudioReactive
                 if (_phaseT >= _gapLen) Enter(Phase.Pick);
                 break;
             case Phase.Idle:
-                if (_phaseT >= IdleLen)
+                if (_phaseT >= _idleLen)
                 {
                     foreach (var e in _news) e.Printed = false;
                     Enter(Phase.Pick);
@@ -317,7 +326,7 @@ public sealed class TeletypeScene : IScene, IDataScene, IAudioReactive
             if (_lastWasSvc)
             {
                 _lastWasSvc = false;
-                _gapLen = GapLen;
+                _gapLen = _gapSec;
                 Enter(Phase.Gap);
                 return;
             }

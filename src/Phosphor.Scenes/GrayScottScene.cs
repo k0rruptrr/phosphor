@@ -9,13 +9,20 @@ namespace Phosphor.Scenes;
 /// Параметры (f, k) плавно дрейфуют по каталогу режимов (mrob.com/pub/comp/xmorphia), узор меняет характер.
 /// Часы сцены идут с множителем options.Speed (при Speed = 0 сцена стоит).
 /// </summary>
-public sealed class GrayScottScene : IScene, IAudioReactive, IHandoffReceiver
+public sealed class GrayScottScene : IScene, IAudioReactive, IHandoffReceiver, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec StepsSpec = new("stepsPerSec", SceneParamKind.Float, 300f, 50f, 1000f, "шагов симуляции в секунду");
+    private static readonly SceneParamSpec[] ParamList = { StepsSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _stepsPerSec;
+
     private const float Da = 1.0f;
     private const float Db = 0.5f;
     private const float Dt = 1.0f;
 
-    private const float StepsPerSecond = 300f;      // × options.Speed
     private const int MaxStepsPerUpdate = 64;       // защита от лавины шагов при больших dt или скорости
 
     private const float HoldMin = 40f;              // с между переходами режимов
@@ -87,6 +94,7 @@ public sealed class GrayScottScene : IScene, IAudioReactive, IHandoffReceiver
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _stepsPerSec = Math.Clamp(options.GetFloat(StepsSpec.Name, StepsSpec.Default), StepsSpec.Min, StepsSpec.Max);
         _cols = cols;
         _rows = rows;
         _w = cols;
@@ -153,7 +161,7 @@ public sealed class GrayScottScene : IScene, IAudioReactive, IHandoffReceiver
         F = f;
         K = k;
 
-        _acc += sdt * StepsPerSecond;
+        _acc += sdt * _stepsPerSec;
         int steps = 0;
         while (_acc >= 1f && steps < MaxStepsPerUpdate)
         {

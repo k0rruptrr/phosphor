@@ -7,8 +7,17 @@ namespace Phosphor.Scenes;
 /// металлический логотип и синус-скроллер поверх сетки. Звук: удар пинает логотип и сжимает полосы,
 /// бас утолщает полосы, уровень ускоряет скроллер. Без звука сцена живёт сама.
 /// </summary>
-public sealed class CracktroScene : IScene, IDataScene, IAudioReactive
+public sealed class CracktroScene : IScene, IDataScene, IAudioReactive, ISceneParams
 {
+    // Параметры для окна настроек.
+    public static readonly SceneParamSpec ScrollSpec = new("scrollSpeed", SceneParamKind.Float, 12f, 2f, 60f, "скорость бегущей строки, симв./с");
+    public static readonly SceneParamSpec BounceSpec = new("bounce", SceneParamKind.Float, 110f, 0f, 300f, "сила отскока логотипа, px/с");
+    private static readonly SceneParamSpec[] ParamList = { ScrollSpec, BounceSpec };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+
+    private float _charsPerSec, _jumpSpeed;
+
     // Шрифт логотипа 5×7: по 7 строк, в каждой 5 бит (старший бит — слева).
     // Порядок: P, H, O, S, R.
     private static readonly byte[][] Font =
@@ -36,8 +45,6 @@ public sealed class CracktroScene : IScene, IDataScene, IAudioReactive
     private const int BufCap = 2048;
     private const int MaxNewsPerPass = 3;
     private const int MaxNewsChars = 90;
-    private const float CharsPerSecond = 12f;
-    private const float JumpSpeed = 110f;  // px/с: импульс логотипа при ударе
     private const float SpringK = 190f;    // жёсткость пружины логотипа (ω ≈ 13.8 рад/с)
     private const float SpringC = 5.5f;    // демпфирование: недодемпфировано, отскок виден
 
@@ -103,6 +110,8 @@ public sealed class CracktroScene : IScene, IDataScene, IAudioReactive
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
+        _charsPerSec = Math.Clamp(options.GetFloat(ScrollSpec.Name, ScrollSpec.Default), ScrollSpec.Min, ScrollSpec.Max);
+        _jumpSpeed = Math.Clamp(options.GetFloat(BounceSpec.Name, BounceSpec.Default), BounceSpec.Min, BounceSpec.Max);
         _cols = Math.Max(1, cols);
         _rows = Math.Max(1, rows);
         _rng = rng;
@@ -194,7 +203,7 @@ public sealed class CracktroScene : IScene, IDataScene, IAudioReactive
         if (_beatPending)
         {
             _beatPending = false;
-            _logoVel -= JumpSpeed;
+            _logoVel -= _jumpSpeed;
         }
 
         StepLogo(dt);
@@ -206,7 +215,7 @@ public sealed class CracktroScene : IScene, IDataScene, IAudioReactive
         {
             _copTime = _clock.Time;
             UpdateBars();
-            float step = CharsPerSecond * _speed * (1f + _levelSm) / _clock.Hz;
+            float step = _charsPerSec * _speed * (1f + _levelSm) / _clock.Hz;
             _scrollPos = (_scrollPos + ticks * step) % _bufLen;
         }
     }
