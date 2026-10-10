@@ -16,6 +16,11 @@ public readonly record struct AudioFrame(
 {
     public static readonly AudioFrame Silent = default;
 
+    /// <summary>Спектр: BandCount полос в логарифмической шкале 30 Гц–16 кГц, 0..1, сглажены (быстрая атака, плавный спад).
+    /// null — анализатор не дал спектра (нет звука / старый источник). Массив принадлежит анализатору: читать в кадре, не хранить.</summary>
+    public float[]? Bands { get; init; }
+    public const int BandCount = 32;
+
     /// <summary>Значения источников модуляции по имени (поле "src" в конфиге фильтров).</summary>
     public float Get(string source) => source switch
     {
