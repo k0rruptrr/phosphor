@@ -754,6 +754,26 @@ public class TvFilterTests
     }
 
     [Fact]
+    public void Secam_FiberNoise_ChangesEveryFrame()
+    {
+        // Аналоговый шум новый в каждом поле: соседние кадры без факелов и краёв (остаются только волокна) должны отличаться.
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0.3f, 0.5f, 0.3f));
+        using var f = gpu.Create<TvFilter>();
+        var a = gpu.Run(f, 10, Secam());
+        var b = gpu.Run(f, 11, Secam());
+        double diff = 0;
+        int n = 0;
+        for (int y = 8; y < H - 8; y++)
+        for (int x = 200; x < 1700; x++)
+        {
+            diff += Math.Abs(a[y, x, 1] - b[y, x, 1]);
+            n++;
+        }
+        Assert.True(diff / n > 0.002, $"средняя разница соседних кадров {diff / n:F5} — шум стоит на месте");
+    }
+
+    [Fact]
     public void Secam_BlackFires_LongMultiColorStreaks()
     {
         // Чёрный вход, fires=1, 60 кадров: длинные (≥ 80 px) цветные штрихи, среди них с G-доминантой и с B-доминантой.

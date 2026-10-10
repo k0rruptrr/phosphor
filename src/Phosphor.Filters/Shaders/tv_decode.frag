@@ -124,8 +124,8 @@ float smoothNoise(float t) {
     return mix(hash1(int(i)), hash1(int(i) + 1), f);
 }
 
-// Фаза строчного шума: своя на строку, сдвигается ~2.5 раза в секунду (целые скачки времени).
-float rowPh(int r) { return rnd(ihash(uint(r) * 0x9E3779B9u ^ 0x51ED27u)) * 97.0 + floor(uTime * 2.5) * 13.7; }
+// Фаза строчного шума: своя на строку, новая каждый кадр (аналоговый шум меняется с каждым полем).
+float rowPh(int r) { return rnd(ihash(uint(r) * 0x9E3779B9u ^ 0x51ED27u)) * 97.0 + float(uFrame & 4095) * 13.7; }
 
 // ---------- SECAM (по исходнику) ----------
 
@@ -356,12 +356,12 @@ void main() {
             col += vec3(1.402 * tail.y, -0.344 * tail.x - 0.714 * tail.y, 1.772 * tail.x);
         }
         // Края гашения (управляет p_edge; gate = clamp(2·edge, 0, 1), так что edge = 0 — выкл).
-        // Левая палка: светлая линия ~1.5% ширины, ядро 0.25% ширины, рваная (сдвиг строки ±3 px, медленно по времени),
+        // Левая палка: светлая линия ~1.5% ширины, ядро 0.25% ширины, рваная (сдвиг строки ±3 px, быстро по времени),
         // блоки по 6 строк пропадают, блоки по 8 строк — ярче (0.9). Правая кромка: последние 1% ширины тёмная, рваная ±2 px,
         // в ней короткие цветные чёрточки 0.15–0.35 (синие, зелёные, пурпурные).
         float gEdge = clamp(p_edge * 2.0, 0.0, 1.0);
-        uint tk = uint(floor(uTime * 2.0));
-        float jitL = 3.0 * smoothNoise(float(row) * 0.7 + uTime * 0.3);
+        uint tk = uint(uFrame);
+        float jitL = 3.0 * smoothNoise(float(row) * 0.7 + uTime * 4.0);
         float dLft = abs(px + 0.5 - (0.015 * W + jitL));
         float hw = 0.00125 * W;
         float prof = 1.0 - smoothstep(hw - 0.4, hw + 2.6, dLft);
@@ -369,7 +369,7 @@ void main() {
         float brightBlk = step(0.88, rnd(ihash(uint(row / 8) * 0x27D4EB2Du ^ tk * 0x165667B1u ^ 0x1B873593u)));
         float lineAmt = gEdge * prof * gapOn * mix(0.55, 0.9, brightBlk);
         col += vec3(lineAmt);
-        float edgeR = W * 0.99 + 2.0 * smoothNoise(float(row) * 0.8 + uTime * 0.3);
+        float edgeR = W * 0.99 + 2.0 * smoothNoise(float(row) * 0.8 + uTime * 4.0);
         uint rh = ihash(uint(row) * 0x9E3779B9u ^ tk * 0x85EBCA6Bu ^ 0x51ED27u);
         float dashOn = step(0.65, rnd(rh));
         float ds = W * (0.975 + 0.02 * rnd(ihash(rh ^ 0x68E31DA4u)));
