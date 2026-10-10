@@ -31,6 +31,20 @@ dotnet build tools\PreviewHost -c Release
 dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phosphor\Phosphor.scr dist\preview.png
 ```
 
+## Сборка для передачи
+
+Одна команда собирает папку и zip для человека без .NET и опыта:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package.ps1
+```
+
+Результат:
+- `dist\PHOSPHOR-<версия>\` и `dist\PHOSPHOR-<версия>.zip`, где версия — `ProductVersion` exe с `+` заменённым на `-` (например `PHOSPHOR-0.7.0-70ba44e.zip`). Путь и размер zip печатаются в конце.
+- Внутри: `Phosphor.exe`, `Phosphor.scr`, `phosphor.json` (копия из репозитория), `install.ps1`, `uninstall.ps1`, `Установить.bat`, `Удалить.bat`, `ПРОЧТИ.txt` (инструкция для получателя).
+
+Скрипт сначала запускает `publish.ps1` (self-contained, с smoke-тестом); если сборка упала, пакет не создаётся. Получатель распаковывает архив и запускает `Установить.bat`; `install.ps1 -Source <папка>` ставит из любой папки с файлами программы. Шаблоны `Установить.bat`, `Удалить.bat` и `ПРОЧТИ.txt` лежат в `scripts\package\`.
+
 ## Режимы запуска
 
 | Аргумент | Что делает |
@@ -71,6 +85,7 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 | Ключ | По умолчанию | Описание |
 |---|---|---|
 | `cellHeightPx` | `18` | Высота ячейки сетки в пикселях, 8..64 |
+| `text.font` | `"Consolas"` | Шрифт сетки: имя семейства или путь к `.ttf`/`.otf`. См. раздел «Шрифт» |
 | `scenes.enabled` | все сцены | Список id включённых сцен. Неизвестные id пропускаются с предупреждением |
 | `scenes.speed` | `1.0` | Общая скорость сцен, 0.05..10 |
 | `scenes.palette` | `"default"` | Палитра: `default`, `amber`, `mono`, `rainbow` |
@@ -103,6 +118,9 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 | `network.news` | `["tass","bbc","reddit:worldnews"]` | Источники новостей, см. ниже |
 | `network.teletext` | `["svt","nos"]` | Каналы телетекста: `nos`, `svt` |
 | `network.satTv` | `[]` | Спутники сцены «сат-ТВ» — id страниц KingOfSat (`en.kingofsat.info/sat-<id>`, например `astra1p`, `hb13g`, `yamal601`). Пусто — `astra1p`, `hb13g`, `eutelsat36d`, `yamal601`, `eam7` |
+| `network.fireRadiusKm` | `500` | Пожары NASA вокруг города: полуширина квадрата, км, 100..1500 |
+| `network.flightRadiusNm` | `100` | Радар самолётов вокруг города: радиус, морские мили, 20..250 |
+| `network.flightStations` | `["HELSINKI-VANTAA:60.32:24.95", "RIGA:56.92:23.97", "BELGRADE:44.82:20.29", "ISTANBUL:41.27:28.75"]` | «Дальние станции» радара (`ИМЯ:широта:долгота`), опрашиваются, если над городом меньше 3 самолётов в воздухе |
 | `exit.mouseThresholdPx` | `12` | Сколько пикселей движения мыши выключают заставку |
 | `screen.trail` | `0` | Шлейф (моушн-блюр) поверх любой сцены и пресета: доля предыдущего кадра, 0 — выкл, до 0.9 |
 | `dimmer.enabled` | `false` | Диммер: через `dimmer.delayMin` минут заставка плавно гасит мониторы |
@@ -117,6 +135,14 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 Ключа `network` в текущем `phosphor.json` нет — действуют значения по умолчанию из таблицы.
 
 Источники новостей (`network.news`): `tass`, `tass-en`, `ria`, `interfax`, `bbc`, `reuters`, `reddit:<сабреддит>` (например `reddit:worldnews`).
+
+## Шрифт
+
+Шрифт сетки задаётся ключом `text.font` (по умолчанию `"Consolas"`) или во вкладке «Шрифт» окна настроек (`/c`). Значение — имя семейства из перечня или путь к `.ttf`/`.otf`/`.ttc`.
+
+- Перечень — только моноширинные шрифты (равные advance у `i`, `M`, `W`, `0`) из трёх мест: встроенные (папка `fonts` рядом с exe), пользовательские (`%LOCALAPPDATA%\Microsoft\Windows\Fonts`) и системные (`C:\Windows\Fonts`). У семейства берётся Regular.
+- Встроенные (OFL, файлы лицензий в `assets\fonts\`): IBM Plex Mono, VT323, Press Start 2P.
+- Шрифт не найден — Consolas и предупреждение в логе. Ширина ячейки — по шрифту, высота — `cellHeightPx`. Псевдографика (рамки, блоки, секстанты) рисуется процедурно и от шрифта не зависит.
 
 ## Сцены и фильтры
 
@@ -185,6 +211,10 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 
 Списки ТВ-каналов для сцены «сат-ТВ» берутся с KingOfSat (`en.kingofsat.info`, страница каждого спутника в `network.satTv`). Обновление — не чаще раза в сутки на спутник, дальше работает кеш. Учитываются только ТВ-каналы (радио и data отсеиваются), открытые — по колонке Encryption (`Clear`).
 
+Пожары (NASA FIRMS, VIIRS NOAA-20, за 24 ч, без ключа) — раз в 3 ч; один файл глобального CSV ~8 МБ, разбирается построчно. Центр — город, округлённый до 0.5° (примерное местоположение), квадрат `network.fireRadiusKm`, не больше 2000 очагов.
+
+Самолёты (adsb.lol, `api.adsb.lol`) — раз в 60 с, без ключа. Российских приёмников почти нет: над Москвой обычно 0–1 самолёт, поэтому при меньше чем 3 самолётах в воздухе источник по кругу опрашивает `network.flightStations` (по умолчанию Хельсинки, Рига, Белград, Стамбул — там покрытие заметно лучше). Через 10 станционных опросов снова проверяется город. Сервер ограничивает частоту: после нескольких быстрых запросов отвечает не JSON, поэтому опрос не чаще раза в минуту.
+
 Если установлен Fort Firewall, новый exe может не получить доступ в сеть: в логе будет ошибка `10013` (запрещён доступ к сокету). Разрешите сеть для полного пути:
 
 `%LOCALAPPDATA%\Programs\Phosphor\Phosphor.scr`
@@ -209,6 +239,6 @@ powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 -KeepConfig
 ## Структура репозитория
 
 - `src\` — исходники приложения (`Phosphor` — точка входа, остальные проекты — библиотеки).
-- `scripts\` — `publish.ps1`, `install.ps1`, `uninstall.ps1`.
+- `scripts\` — `publish.ps1`, `install.ps1`, `uninstall.ps1`, `package.ps1` (пакет для передачи), `package\` (шаблоны bat и ПРОЧТИ.txt).
 - `tools\PreviewHost\` — проверка превью `/p`, в solution не входит.
 - `dist\` — результат сборки (не в git).

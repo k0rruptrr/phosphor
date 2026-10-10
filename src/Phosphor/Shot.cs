@@ -69,6 +69,12 @@ internal static class Shot
         var clock = new DateTime(2026, 10, 9, 4, 20, 0);
         if (TimeOnly.TryParse(Environment.GetEnvironmentVariable("PHOSPHOR_SHOT_TIME"), System.Globalization.CultureInfo.InvariantCulture, out var shotTime))
             clock = DateOnly.FromDateTime(clock).ToDateTime(shotTime);
+        // Со своим PHOSPHOR_SHOT_TIME снимок показывает это время, а не реальные часы (только если задано явно).
+        if (Environment.GetEnvironmentVariable("PHOSPHOR_SHOT_TIME") is { Length: > 0 })
+        {
+            var fixedClock = new ClockSnapshot(clock);
+            data.RegisterLive("clock", () => (fixedClock, 1L));
+        }
 
         // Диммер: env PHOSPHOR_DIM_ELAPSED=<с> — прогресс как будто заставка работает столько секунд (Enabled — true, остальное из конфига).
         // Только программное затемнение картинки; подсветку в снимке не трогаем. Конфиг в файл не пишется.
@@ -85,6 +91,7 @@ internal static class Shot
         const float dt = 1f / 60f;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         int lastBeat = -1;
+        var fakeBands = new float[AudioFrame.BandCount];
         for (int f = 0; f < args.Frames; f++)
         {
             var audio = AudioFrame.Silent;
@@ -93,7 +100,15 @@ internal static class Shot
                 float t = f * dt, period = 60f / fakeBpm;
                 int beatNo = (int)(t / period);
                 float since = t - beatNo * period, pulse = MathF.Exp(-since / 0.15f);
-                audio = new AudioFrame(true, 0.6f, 0.3f + 0.5f * pulse, 0.4f, 0.3f, beatNo != lastBeat, pulse, fakeBpm);
+                // Синтетический спектр: низ полос пульсирует с ударом, верх — плавные волны (детерминированно, без rng).
+                for (int i = 0; i < fakeBands.Length; i++)
+                {
+                    float u = i / (float)(fakeBands.Length - 1);
+                    float low = MathF.Exp(-u * 6f) * (0.35f + 0.6f * pulse);
+                    float wave = (0.25f + 0.2f * MathF.Sin(t * 3.1f + i * 0.55f) + 0.1f * MathF.Sin(t * 7.3f + i * 1.7f)) * (0.35f + 0.65f * u);
+                    fakeBands[i] = Math.Clamp(low + wave * 0.9f, 0f, 1f);
+                }
+                audio = new AudioFrame(true, 0.6f, 0.3f + 0.5f * pulse, 0.4f, 0.3f, beatNo != lastBeat, pulse, fakeBpm) { Bands = fakeBands };
                 lastBeat = beatNo;
             }
             director.Update(dt, f, audio);

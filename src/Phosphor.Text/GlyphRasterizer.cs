@@ -1,6 +1,5 @@
 using Phosphor.Core;
 using StbTrueTypeSharp;
-using System.Runtime.InteropServices;
 
 namespace Phosphor.Text;
 
@@ -31,24 +30,27 @@ public static class GlyphRasterizer
     public const int AtlasCols = 32;
 
     private const string FontDir = @"C:\Windows\Fonts";
-    private const string PrimaryFont = "consola.ttf";
+    private const string ConsolasFile = "consola.ttf";
     private static readonly string[] FallbackFonts = { "msgothic.ttc", "seguisym.ttf" };
 
-    /// <summary>Растеризовать все глифы GlyphSet.All при высоте ячейки cellHeightPx (8..64).</summary>
-    public static AtlasBitmap Rasterize(int cellHeightPx)
+    /// <summary>
+    /// Растеризовать все глифы GlyphSet.All при высоте ячейки cellHeightPx (8..64).
+    /// font — имя семейства или путь к .ttf/.otf (см. FontCatalog); не найден — Consolas, причина в warn.
+    /// </summary>
+    public static AtlasBitmap Rasterize(int cellHeightPx, string? font = null, Action<string>? warn = null)
     {
         if (cellHeightPx < 8 || cellHeightPx > 64)
             throw new ArgumentOutOfRangeException(nameof(cellHeightPx), "Высота ячейки должна быть 8..64");
 
-        var faces = new List<FontFace>();
+        var faces = new List<FontFile>();
         try
         {
             // Основной шрифт обязан быть первым: по нему считаются размеры ячейки.
-            faces.Add(FontFace.Load(Path.Combine(FontDir, PrimaryFont)));
+            faces.Add(OpenPrimary(font, warn));
             foreach (var name in FallbackFonts)
             {
                 string path = Path.Combine(FontDir, name);
-                if (File.Exists(path)) faces.Add(FontFace.Load(path));
+                if (File.Exists(path)) faces.Add(FontFile.Load(path));
             }
             return Build(faces, cellHeightPx);
         }
@@ -58,7 +60,23 @@ public static class GlyphRasterizer
         }
     }
 
-    private static unsafe AtlasBitmap Build(List<FontFace> faces, int cellH)
+    private static FontFile OpenPrimary(string? font, Action<string>? warn)
+    {
+        string want = string.IsNullOrWhiteSpace(font) ? FontCatalog.DefaultFamily : font.Trim();
+        var entry = FontCatalog.Find(want);
+        if (entry is not null)
+        {
+            try { return FontFile.Load(entry.Path); }
+            catch (Exception e) when (e is IOException or InvalidDataException) { warn?.Invoke($"шрифт '{want}' не открылся ({e.Message}), использую Consolas"); }
+        }
+        else if (!string.Equals(want, FontCatalog.DefaultFamily, StringComparison.OrdinalIgnoreCase))
+        {
+            warn?.Invoke($"шрифт '{want}' не найден среди моноширинных, использую Consolas");
+        }
+        return FontFile.Load(Path.Combine(FontDir, ConsolasFile));
+    }
+
+    private static unsafe AtlasBitmap Build(List<FontFile> faces, int cellH)
     {
         var primary = faces[0];
         float scale = StbTrueType.stbtt_ScaleForPixelHeight(primary.Info, cellH);
@@ -124,7 +142,7 @@ public static class GlyphRasterizer
     /// Основной шрифт: origin по X = 0, baseline по Y. Фолбэк: масштаб по высоте Consolas,
     /// уменьшение, если шире ячейки, центрирование по горизонтали.
     /// </summary>
-    private static unsafe void DrawFontGlyph(FontFace face, bool isPrimary, char c, float primaryScale,
+    private static unsafe void DrawFontGlyph(FontFile face, bool isPrimary, char c, float primaryScale,
         int cellW, int cellH, int baseline, byte[] dst, int dstW, int ox, int oy)
     {
         float sc = isPrimary ? primaryScale : cellH / (float)(face.Ascent - face.Descent);
@@ -160,55 +178,6 @@ public static class GlyphRasterizer
         finally
         {
             StbTrueType.stbtt_FreeBitmap(bmp, null);
-        }
-    }
-
-    /// <summary>Загруженный файл шрифта. Байты закреплены в памяти до Dispose.</summary>
-    private sealed class FontFace : IDisposable
-    {
-        private GCHandle _handle;
-
-        public StbTrueType.stbtt_fontinfo Info { get; }
-        /// <summary>hhea ascent/descent в единицах шрифта (descent отрицательный).</summary>
-        public int Ascent { get; }
-        public int Descent { get; }
-
-        private FontFace(GCHandle handle, StbTrueType.stbtt_fontinfo info, int ascent, int descent)
-        {
-            _handle = handle;
-            Info = info;
-            Ascent = ascent;
-            Descent = descent;
-        }
-
-        public static unsafe FontFace Load(string path)
-        {
-            byte[] data = File.ReadAllBytes(path);
-            var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
-            try
-            {
-                byte* p = (byte*)handle.AddrOfPinnedObject();
-                int offset = StbTrueType.stbtt_GetFontOffsetForIndex(p, 0);
-                if (offset < 0) throw new InvalidDataException($"Не удалось найти шрифт в '{path}'");
-
-                var info = new StbTrueType.stbtt_fontinfo();
-                if (StbTrueType.stbtt_InitFont(info, p, offset) == 0)
-                    throw new InvalidDataException($"stbtt_InitFont не смог разобрать '{path}'");
-
-                int asc, desc, gap;
-                StbTrueType.stbtt_GetFontVMetrics(info, &asc, &desc, &gap);
-                return new FontFace(handle, info, asc, desc);
-            }
-            catch
-            {
-                handle.Free();
-                throw;
-            }
-        }
-
-        public void Dispose()
-        {
-            if (_handle.IsAllocated) _handle.Free();
         }
     }
 }

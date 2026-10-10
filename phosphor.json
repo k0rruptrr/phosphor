@@ -1,9 +1,10 @@
 {
   "cellHeightPx": 18,
+  "text": { "font": "Consolas" },
   "scenes": {
     "enabled": ["matrix", "starfield", "pipes", "doomfire", "life", "dvd", "aquarium",
                 "teletext", "teletype", "weatherboard", "torus", "grayscott", "voxel", "boids",
-                "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv"],
+                "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv", "scope", "bbs", "radar", "fires", "hifi", "clocks"],
     "speed": 1.0,
     "palette": "default",
     "params": {

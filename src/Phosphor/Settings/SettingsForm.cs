@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.Globalization;
 using Phosphor.Core;
 using Phosphor.Gfx;
 using Phosphor.Platform;
+using Phosphor.Text;
 using WinTimer = System.Windows.Forms.Timer;
 
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Phosphor.App.Tests")]
@@ -65,6 +67,15 @@ internal sealed class SettingsForm : Form
     // Сеть
     private readonly CheckBox _netEnabled = new();
     private readonly TextBox _city = new();
+    // Шрифт сетки
+    private readonly ComboBox _font = new();
+    private readonly Label _fontSample = new();
+    /// <summary>Перечень шрифтов на момент открытия окна (для образца и подписей).</summary>
+    private IReadOnlyList<FontEntry> _fontList = Array.Empty<FontEntry>();
+    private readonly Dictionary<string, Font> _sampleFonts = new(StringComparer.OrdinalIgnoreCase);
+    private PrivateFontCollection? _privateFonts;
+    private static readonly Lazy<HashSet<string>> s_installedFamilies = new(() =>
+        new InstalledFontCollection().Families.Select(f => f.Name).ToHashSet(StringComparer.OrdinalIgnoreCase));
 
     private string _previewScene = "";
     /// <summary>Пресет, который редактируется и показывается в превью (выбран в списке или активный). null — shuffle.</summary>
@@ -139,12 +150,12 @@ internal sealed class SettingsForm : Form
     {
         _tabs.Location = new Point(TabsX, TabsY);
         _tabs.Size = new Size(TabsW, TabsH);
-        _tabs.ItemWidth = 96;
         _tabs.Add("Сцены", Page(BuildScenesPage));
         _tabs.Add("Фильтры", Page(BuildFiltersPage));
         _tabs.Add("Перебор", Page(BuildShufflePage));
         _tabs.Add("Диммер", Page(BuildDimmerPage));
         _tabs.Add("Сеть", Page(BuildNetworkPage));
+        _tabs.Add("Шрифт", Page(BuildFontPage));
         _tabs.Add("О программе", Page(BuildAboutPage));
     }
 
@@ -323,6 +334,92 @@ internal sealed class SettingsForm : Form
         Place(p, Lbl("Данные кешируются; без сети сцены работают на кеше.", Theme.Muted), 12, 88);
     }
 
+    private void BuildFontPage(Panel p)
+    {
+        Place(p, Lbl("шрифт сетки"), 12, 17);
+        _font.Location = new Point(LabelCol(FontLabels), 12);
+        _font.Size = new Size(330, 24);
+        _font.DropDownStyle = ComboBoxStyle.DropDownList;
+        _font.SelectedIndexChanged += (_, _) => { if (!_loading) OnFontChanged(); };
+        p.Controls.Add(_font);
+
+        Place(p, Lbl("образец", Theme.Muted), 12, 56);
+        _fontSample.AutoSize = false;
+        _fontSample.Location = new Point(12, 80);
+        _fontSample.Size = new Size(568, 56);
+        _fontSample.Text = "PHOSPHOR 0123 ░▒▓█ アイウ";
+        p.Controls.Add(_fontSample);
+
+        Place(p, Lbl("Шрифт применяется в превью сразу.", Theme.Muted), 12, 156);
+        Place(p, Lbl("Ширина ячейки — по шрифту, высота — cellHeightPx.", Theme.Muted), 12, 180);
+        Place(p, Lbl("«· встроенный» — из папки fonts рядом с exe (OFL).", Theme.Muted), 12, 204);
+        Place(p, Lbl("Не найден — Consolas и предупреждение в логе.", Theme.Muted), 12, 228);
+    }
+
+    private void FillFontCombo(string current)
+    {
+        _fontList = FontCatalog.List();
+        _font.BeginUpdate();
+        _font.Items.Clear();
+        foreach (var e in _fontList) _font.Items.Add(new Choice(e.Family, e.Builtin ? $"{e.Family} · встроенный" : e.Family));
+        int idx = _font.Items.Cast<Choice>().ToList().FindIndex(ch => string.Equals(ch.Value, current, StringComparison.OrdinalIgnoreCase));
+        if (idx < 0)
+        {
+            // Значение из конфига не в перечне: путь к файлу или отсутствующий шрифт — показываем, как есть
+            bool isPath = current.Contains('\\') || current.Contains('/') || current.Contains(':');
+            string text = isPath ? Path.GetFileName(current) + " · файл" : current + " · не найден";
+            _font.Items.Insert(0, new Choice(current, text));
+            idx = 0;
+        }
+        _font.SelectedIndex = idx;
+        _font.EndUpdate();
+        UpdateFontSample();
+    }
+
+    private void OnFontChanged()
+    {
+        if (_font.SelectedItem is not Choice ch) return;
+        _model.Config.Text.Font = ch.Value;
+        UpdateFontSample();
+        UpdatePreview();
+    }
+
+    private void UpdateFontSample()
+    {
+        _fontSample.Font = _font.SelectedItem is Choice ch ? SampleFont(ch.Value) : Theme.Mono;
+    }
+
+    /// <summary>Образец шрифтом семейства. Установленные — из системы; встроенные и пользовательские — из файла (PrivateFontCollection).</summary>
+    private Font SampleFont(string family)
+    {
+        if (_sampleFonts.TryGetValue(family, out var cached)) return cached;
+        var entry = _fontList.FirstOrDefault(e => string.Equals(e.Family, family, StringComparison.OrdinalIgnoreCase));
+        if (entry is null) return Theme.Mono; // не в перечне — образец обычным шрифтом окна
+        try
+        {
+            Font font;
+            if (s_installedFamilies.Value.Contains(family))
+            {
+                font = new Font(family, 14f, FontStyle.Regular, GraphicsUnit.Point);
+            }
+            else
+            {
+                _privateFonts ??= new PrivateFontCollection();
+                _privateFonts.AddFontFile(entry.Path);
+                font = new Font(_privateFonts.Families[^1], 14f, FontStyle.Regular, GraphicsUnit.Point);
+            }
+            _sampleFonts[family] = font;
+            return font;
+        }
+        catch (Exception e)
+        {
+            _log.Warn($"образец шрифта '{family}': {e.Message}");
+            return Theme.Mono;
+        }
+    }
+
+    private static readonly string[] FontLabels = { "шрифт сетки" };
+
     private void BuildAboutPage(Panel p)
     {
         var name = Lbl("PHOSPHOR " + AppInfo.Display);
@@ -432,6 +529,8 @@ internal sealed class SettingsForm : Form
 
         _netEnabled.Checked = c.Network.Enabled;
         _city.Text = c.Network.City;
+
+        FillFontCombo(c.Text.Font);
     }
 
     private void ReadControls()
@@ -462,6 +561,8 @@ internal sealed class SettingsForm : Form
         c.Network.Enabled = _netEnabled.Checked;
         var city = _city.Text.Trim();
         if (city.Length > 0) c.Network.City = city;
+
+        if (_font.SelectedItem is Choice font) c.Text.Font = font.Value;
     }
 
     private void Save()
@@ -934,6 +1035,17 @@ internal sealed class SettingsForm : Form
         UpdatePreview();
     }
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            foreach (var f in _sampleFonts.Values) f.Dispose();
+            _sampleFonts.Clear();
+            _privateFonts?.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+
     /// <summary>Закрытие без «Сохранить»: если пресеты изменены и не записаны в файл — спросить.</summary>
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
@@ -1153,7 +1265,33 @@ internal sealed class FlatTabs : Panel
 
     public event EventHandler? SelectedIndexChanged;
 
-    public int ItemWidth { get; set; } = 96;
+    /// <summary>Поля слева и справа от подписи вкладки. Если все вкладки в ширину не влезают — TabPaddingTight.</summary>
+    public const int TabPadding = 12, TabPaddingTight = 6;
+    private readonly List<Rectangle> _rects = new();
+
+    /// <summary>Ширина каждой вкладки — по тексту (TextRenderer.MeasureText) + поля.</summary>
+    private void RebuildRects()
+    {
+        _rects.Clear();
+        int textSum = 0;
+        foreach (var it in _items) textSum += TextRenderer.MeasureText(it.Title, Theme.Mono).Width;
+        int pad = textSum + _items.Count * 2 * TabPadding > Width ? TabPaddingTight : TabPadding;
+        int x = 0;
+        foreach (var it in _items)
+        {
+            int w = TextRenderer.MeasureText(it.Title, Theme.Mono).Width + 2 * pad;
+            _rects.Add(new Rectangle(x, 0, w, HeaderHeight));
+            x += w;
+        }
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        RebuildRects();
+        Invalidate();
+    }
+
 
     public int SelectedIndex
     {
@@ -1166,6 +1304,7 @@ internal sealed class FlatTabs : Panel
         page.Dock = DockStyle.Fill;
         page.Visible = false;
         _items.Add((title, page));
+        RebuildRects();
         Controls.Add(page);
         if (_selected < 0) Select(0);
     }
@@ -1186,7 +1325,7 @@ internal sealed class FlatTabs : Panel
         using (var bg = new SolidBrush(Theme.Bg)) g.FillRectangle(bg, 0, 0, Width, HeaderHeight);
         for (int i = 0; i < _items.Count; i++)
         {
-            var r = new Rectangle(i * ItemWidth, 0, ItemWidth, HeaderHeight);
+            var r = _rects[i];
             bool sel = i == _selected;
             using (var b = new SolidBrush(sel ? Theme.Panel : Theme.Bg)) g.FillRectangle(b, r);
             TextRenderer.DrawText(g, _items[i].Title, Theme.Mono, r, sel ? Theme.Accent : Theme.Muted,
@@ -1201,8 +1340,8 @@ internal sealed class FlatTabs : Panel
     {
         base.OnMouseDown(e);
         if (e.Button != MouseButtons.Left || e.Y < 0 || e.Y >= HeaderHeight) return;
-        int i = e.X / ItemWidth;
-        if (i >= 0 && i < _items.Count) Select(i);
+        int i = _rects.FindIndex(r => r.Contains(e.X, e.Y));
+        if (i >= 0) Select(i);
     }
 }
 

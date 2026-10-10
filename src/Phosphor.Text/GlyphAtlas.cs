@@ -27,9 +27,9 @@ public sealed class GlyphAtlas : IDisposable, IGlyphCoverage
     public IReadOnlyList<char> Missing => _bmp.Missing;
 
     /// <summary>Растеризовать и загрузить на GPU.</summary>
-    public static unsafe GlyphAtlas Build(GL gl, int cellHeightPx)
+    public static unsafe GlyphAtlas Build(GL gl, int cellHeightPx, string? font = null, Action<string>? warn = null)
     {
-        var bmp = GlyphRasterizer.Rasterize(cellHeightPx);
+        var bmp = GlyphRasterizer.Rasterize(cellHeightPx, font, warn);
 
         uint tex = gl.GenTexture();
         gl.BindTexture(TextureTarget.Texture2D, tex);

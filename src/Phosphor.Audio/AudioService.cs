@@ -70,7 +70,9 @@ public sealed class AudioService : IDisposable
             var analyzer = _analyzer;
             if (analyzer is null) return AudioFrame.Silent;
             var frame = analyzer.Read(dt);
-            return _capturing ? frame : AudioFrame.Silent;
+            if (!_capturing) return AudioFrame.Silent;
+            // Спектр кладём только при звуке: при тишине Bands = null.
+            return frame.Active ? frame with { Bands = analyzer.Bands } : frame;
         }
         catch (Exception e)
         {

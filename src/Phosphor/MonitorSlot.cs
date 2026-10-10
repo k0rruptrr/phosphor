@@ -35,7 +35,7 @@ internal sealed class Shared(GL gl, PhosphorConfig config, SceneRegistry scenes,
     {
         cellHeightPx = Math.Clamp(cellHeightPx, 8, 64);
         if (_fonts.TryGetValue(cellHeightPx, out var f)) return f;
-        var atlas = GlyphAtlas.Build(Gl, cellHeightPx);
+        var atlas = GlyphAtlas.Build(Gl, cellHeightPx, Config.Text.Font, m => Log.Warn(m));
         if (atlas.Missing.Count > 0) Log.Warn($"атлас {cellHeightPx}px: нет глифов {new string(atlas.Missing.ToArray())}");
         f = new Font(atlas, new GridRenderer(Gl, atlas));
         _fonts[cellHeightPx] = f;

@@ -7,7 +7,7 @@ public enum LaunchMode { Screensaver, Preview, Configure, Windowed, Shot, Settin
 /// <summary>Вкладки окна настроек (допустимые значения --tab).</summary>
 public static class SettingsTabs
 {
-    public static readonly string[] All = { "scenes", "filters", "shuffle", "dimmer", "network", "about" };
+    public static readonly string[] All = { "scenes", "filters", "shuffle", "dimmer", "network", "font", "about" };
 }
 
 /// <summary>Разобранные аргументы командной строки. Формат — тот, с которым Windows вызывает .scr.</summary>

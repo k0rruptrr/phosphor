@@ -32,4 +32,8 @@
   <ItemGroup>
     <None Include="..\..\phosphor.json" Link="phosphor.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <!-- Встроенные шрифты (OFL) и их лицензии: в выходе — fonts\ рядом с exe (см. FontCatalog) -->
+  <ItemGroup>
+    <None Include="..\..\assets\fonts\**" Link="fonts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

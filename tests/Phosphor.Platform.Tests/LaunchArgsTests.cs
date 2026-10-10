@@ -247,6 +247,7 @@ public class LaunchArgsTests
     [InlineData("SHUFFLE")]
     [InlineData("dimmer")]
     [InlineData("network")]
+    [InlineData("font")]
     [InlineData("about")]
     public void SettingsShot_TabIsCaseInsensitive(string tab)
     {

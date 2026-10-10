@@ -52,7 +52,8 @@ public sealed class DataHub : IDisposable
     private readonly List<IDataSource> _sources;
     private readonly bool _online;
     private readonly Action<string> _log;
-    private readonly HttpClient _http;
+    private readonly Dictionary<TimeSpan, HttpClient> _clients = new();   // по таймауту; трогаются только из фонового потока
+    private readonly HttpMessageHandler? _handler;                       // только для тестов
     private readonly CancellationTokenSource _cts = new();
     private readonly ConcurrentDictionary<string, (DataSnapshot Snap, long Version)> _latest = new();
     private readonly ConcurrentDictionary<string, DataSnapshot> _perSource = new();
@@ -64,7 +65,8 @@ public sealed class DataHub : IDisposable
 
     /// <param name="merge">Как объединить снимки нескольких источников одного ключа (например, новости). null — берётся последний.</param>
     public DataHub(IEnumerable<IDataSource> sources, bool online, Action<string> log,
-        Func<string, IReadOnlyList<DataSnapshot>, DataSnapshot?>? merge = null, string? cacheDir = null)
+        Func<string, IReadOnlyList<DataSnapshot>, DataSnapshot?>? merge = null, string? cacheDir = null,
+        HttpMessageHandler? handler = null)
     {
         _sources = sources.ToList();
         _online = online;
@@ -74,8 +76,20 @@ public sealed class DataHub : IDisposable
             ?? (Environment.GetEnvironmentVariable("PHOSPHOR_CACHE_DIR") is { Length: > 0 } env
                 ? env
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Phosphor", "cache"));
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("PHOSPHOR-screensaver/0.1 (ascii screensaver; personal use)");
+        _handler = handler;
+    }
+
+    /// <summary>
+    /// HttpClient с таймаутом на один HTTP-запрос источника (IDataSource.Timeout). Таймаут — свойство клиента,
+    /// а не общий для всех: тяжёлый источник (FIRMS, 8 МБ) не режет остальных, и наоборот.
+    /// </summary>
+    private HttpClient ClientFor(TimeSpan timeout)
+    {
+        if (_clients.TryGetValue(timeout, out var c)) return c;
+        c = _handler is null ? new HttpClient { Timeout = timeout } : new HttpClient(_handler, disposeHandler: false) { Timeout = timeout };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("PHOSPHOR-screensaver/0.1 (ascii screensaver; personal use)");
+        _clients[timeout] = c;
+        return c;
     }
 
     private readonly ConcurrentDictionary<string, Func<(DataSnapshot Snap, long Version)?>> _live = new();
@@ -106,6 +120,13 @@ public sealed class DataHub : IDisposable
     {
         if (key == "clock")
         {
+            // Живой провайдер (снимок с фиксированным временем, см. Shot) — приоритетнее реальных часов.
+            if (_live.TryGetValue(key, out var fixedClock) && fixedClock() is { } fc)
+            {
+                snapshot = fc.Snap;
+                version = fc.Version;
+                return true;
+            }
             // Часы — не источник: всегда свежие, версия = номер секунды.
             var now = DateTime.Now;
             snapshot = new ClockSnapshot(now);
@@ -134,7 +155,7 @@ public sealed class DataHub : IDisposable
                 if (DateTime.UtcNow < next[s] || ct.IsCancellationRequested) continue;
                 try
                 {
-                    var snap = await s.FetchAsync(_http, ct).ConfigureAwait(false);
+                    var snap = await s.FetchAsync(ClientFor(s.Timeout), ct).ConfigureAwait(false);
                     if (snap is not null)
                     {
                         Publish(s, snap);
@@ -216,7 +237,7 @@ public sealed class DataHub : IDisposable
     {
         _cts.Cancel();
         try { _loop?.Wait(2000); } catch { /* выход */ }
-        _http.Dispose();
+        foreach (var c in _clients.Values) c.Dispose();
         _cts.Dispose();
     }
 }

@@ -26,12 +26,18 @@ public sealed class SceneParamsTests
         ["C64LoadScene.titleSeconds"] = new(Frames: 2400, Reason: "титульник после загрузки; 40 с симуляции"),
         ["C64LoadScene.loadMin"] = new(Frames: 2400, Reason: "конец загрузки зависит от loadMin; 40 с симуляции"),
         ["PlasmaScene.paletteInterval"] = new(Frames: 600, Reason: "смена палитры раз в paletteInterval; 10 с симуляции"),
+        ["HifiScene.faceSec"] = new(Frames: 1500, Reason: "смена лица по таймеру faceSec; 25 с симуляции"),
+        ["ClocksScene.faceSec"] = new(Frames: 1500, Reason: "смена циферблата по таймеру faceSec; 25 с симуляции"),
+        ["ClocksScene.sweep"] = new(Skip: true, Reason: "проверяется подставными часами: SweepChangesSecondHandMotion"),
         // density=0 — пустой экран по определению (существующие тесты MatrixSceneTests на это опираются).
         ["MatrixScene.density"] = new(EmptyAtMinOk: true, Reason: "Min=0 — дождь выключен, экран пуст"),
         // Удары: без ударов звука сцена не реагирует, поэтому подаём удары.
         ["RotozoomScene.beatsPerReverse"] = new(Beats: true, Reason: "разворот считается по ударам звука"),
         ["RotozoomScene.punchScale"] = new(Beats: true, Reason: "сжатие масштаба — на удар звука"),
         ["CracktroScene.bounce"] = new(Beats: true, Reason: "отскок логотипа — на удар звука"),
+        ["BbsScene.baud"] = new(Frames: 900, Reason: "печать идёт baud/10 симв./с; разница видна, пока лого прорисовывается; 15 с симуляции"),
+        ["BbsScene.sessionMax"] = new(Skip: true, Reason: "длина сеанса — проверяется BbsSceneTests.SessionMaxControlsLength"),
+        ["ScopeScene.figures"] = new(Frames: 2400, Reason: "фигура раз в 20–40 с; 40 с симуляции"),
         // Данные сети: без DataSnapshot сцена не переходит к следующим кадрам/страницам. Проверяется в тестах сцены.
         ["TeletextScene.searchTime"] = new(Skip: true, Reason: "проверяется подставными данными: TeletextSearchTimeChangesTiming"),
         ["TeletextScene.holdMin"] = new(Skip: true, Reason: "проверяется подставными данными: TeletextHoldMinChangesPageChanges"),
@@ -43,6 +49,8 @@ public sealed class SceneParamsTests
         ["SatTvScene.scrollSec"] = new(Skip: true, Reason: "проверяется подставными данными: ScrollSecParamSetsStepLength"),
         ["SatTvScene.maxChannels"] = new(Skip: true, Reason: "проверяется подставными данными: MaxChannelsLimitsChannelsPerEpisode"),
         ["SatTvScene.style"] = new(Skip: true, Reason: "проверяется подставными данными: ThreeStylesGiveDifferentBackgrounds"),
+        ["FiresScene.flicker"] = new(Skip: true, Reason: "мерцание видно только на очагах: проверяется подставными данными FIRMS (FiresSceneTests)"),
+        ["RadarScene.labels"] = new(Skip: true, Reason: "проверяется подставными данными: LabelsParamTogglesFormulary"),
     };
 
     private readonly ITestOutputHelper _out;

@@ -31,6 +31,12 @@ public sealed class BeatAnalyzer
     private const double BpmMin = 70.0;
     private const double BpmMax = 180.0;
 
+    // Спектр: лог-полосы 30 Гц–16 кГц, dB → 0..1 (−60..0 дБ), спад 12 дБ/с.
+    private const double BandLoHz = 30.0;
+    private const double BandHiHz = 16000.0;
+    private const double BandFloorDb = -60.0;
+    private const double BandDecayDb = 12.0;
+
     // Онсет-детектор (временная область).
     private const double LpfHz = 150.0;
     private const double LpfQ = 0.7071;
@@ -70,6 +76,15 @@ public sealed class BeatAnalyzer
 
     // Спектр для уровней.
     private readonly double[] _curMag = new double[HalfSize];
+
+    // Спектр по полосам: BandCount значений 0..1 (массив один, заполняется на месте в ProcessHop).
+    // _bandLo/_bandHi — диапазон бинов [lo, hi); если полоса уже бина — lo = -1, значение интерполируется в _bandPos.
+    /// <summary>Полосы спектра 0..1 (AudioFrame.BandCount). Обновляются на каждом FFT-хопе; читать из главного потока.</summary>
+    public float[] Bands { get; } = new float[AudioFrame.BandCount];
+    private readonly int[] _bandLo = new int[AudioFrame.BandCount];
+    private readonly int[] _bandHi = new int[AudioFrame.BandCount];
+    private readonly double[] _bandPos = new double[AudioFrame.BandCount];
+    private readonly double _bandDecayStep; // падение полосы за хоп, в единицах 0..1
 
     // AGC: трекеры пика по полосам.
     private readonly double _agcDecay;
@@ -176,6 +191,31 @@ public sealed class BeatAnalyzer
 
         _onsetThreshold = OnsetBaseThreshold / _sensitivity;
         _peakWindowSamples = (long)Math.Round(OnsetPeakWindowSec * sampleRate);
+
+        // Лог-полосы: границы — геометрическая прогрессия от 30 Гц до 16 кГц.
+        double binHz = (double)sampleRate / FftSize;
+        double ratio = Math.Pow(BandHiHz / BandLoHz, 1.0 / AudioFrame.BandCount);
+        for (int b = 0; b < AudioFrame.BandCount; b++)
+        {
+            double f0 = BandLoHz * Math.Pow(ratio, b);
+            double f1 = BandLoHz * Math.Pow(ratio, b + 1);
+            int lo = Math.Max(1, (int)Math.Ceiling(f0 / binHz));
+            int hi = Math.Min(HalfSize, (int)Math.Ceiling(f1 / binHz));
+            if (hi > lo)
+            {
+                _bandLo[b] = lo;
+                _bandHi[b] = hi;
+            }
+            else
+            {
+                // Полоса уже бина: берём бин у геометрического центра, с интерполяцией между соседями.
+                _bandLo[b] = -1;
+                _bandHi[b] = -1;
+                double fc = Math.Sqrt(f0 * f1);
+                _bandPos[b] = Math.Clamp(fc / binHz, 1.0, HalfSize - 1.0);
+            }
+        }
+        _bandDecayStep = BandDecayDb / -BandFloorDb * ((double)Hop / sampleRate);
     }
 
     /// <summary>Индекс бина по частоте: start — первый бин с f ≥ hz, иначе — первый бин с f > hz.</summary>
@@ -323,6 +363,8 @@ public sealed class BeatAnalyzer
         for (int k = 0; k < HalfSize; k++)
             _curMag[k] = Math.Sqrt(_re[k] * _re[k] + _im[k] * _im[k]) * _magScale;
 
+        UpdateBands();
+
         double total = BandSum(1, HalfSize);
         double bass = BandSum(_bassStart, _bassEnd);
         double mid = BandSum(_midStart, _midEnd);
@@ -339,6 +381,32 @@ public sealed class BeatAnalyzer
         _high = Smooth(_high, nHigh);
 
         if (loud) _silentSec = 0;
+    }
+
+    /// <summary>Полосы спектра: максимум амплитуды бинов полосы → дБ → 0..1. Атака мгновенная, спад 12 дБ/с.</summary>
+    private void UpdateBands()
+    {
+        for (int b = 0; b < AudioFrame.BandCount; b++)
+        {
+            double mag;
+            if (_bandLo[b] >= 0)
+            {
+                mag = 0;
+                for (int k = _bandLo[b]; k < _bandHi[b]; k++)
+                    if (_curMag[k] > mag) mag = _curMag[k];
+            }
+            else
+            {
+                double p = _bandPos[b];
+                int i0 = (int)p;
+                double fr = p - i0;
+                mag = _curMag[i0] * (1 - fr) + _curMag[Math.Min(i0 + 1, HalfSize - 1)] * fr;
+            }
+
+            double db = 20.0 * Math.Log10(Math.Max(mag, 1e-6));
+            double target = Math.Clamp((db - BandFloorDb) / -BandFloorDb, 0.0, 1.0);
+            Bands[b] = (float)Math.Max(target, Bands[b] - _bandDecayStep);
+        }
     }
 
     private void RecordBeat(long t)

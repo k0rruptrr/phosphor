@@ -16,4 +16,8 @@
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
+  <!-- Встроенные шрифты для тестов FontCatalog/GlyphRasterizer: как у exe — fonts\ рядом с dll -->
+  <ItemGroup>
+    <None Include="..\..\assets\fonts\*.ttf" Link="fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

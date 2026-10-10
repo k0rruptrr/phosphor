@@ -27,6 +27,13 @@ internal static class DataWiring
             else log.Warn($"data: неизвестный источник новостей '{id}'. Есть: {string.Join(", ", NewsCatalog.Ids)}, reddit:<sub>");
         }
         if (!string.IsNullOrWhiteSpace(net.City)) sources.Add(new WeatherSource(net.City, net.Lat, net.Lon));
+        // Пожары и самолёты — по городу (или координатам из конфига); без точки не создаются.
+        if (!string.IsNullOrWhiteSpace(net.City) || (net.Lat is not null && net.Lon is not null))
+        {
+            sources.Add(new FireSource(where, net.FireRadiusKm));
+            var stations = FlightSource.ParseStations(net.FlightStations, m => log.Warn($"data: {m}"));
+            sources.Add(new FlightSource(where, net.FlightRadiusNm, stations));
+        }
         foreach (var ch in net.Teletext)
         {
             if (TeletextSource.Create(ch) is { } s) sources.Add(s);
