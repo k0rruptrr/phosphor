@@ -40,5 +40,6 @@
   <!-- Логотип для бирки (source=phosphor, BadgeLayer): в выходе — logo\phosphor.png рядом с exe, как fonts\ -->
   <ItemGroup>
     <None Include="..\..\assets\logo\phosphor.png" Link="logo\phosphor.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="..\..\assets\logo\greyprism.png" Link="logo\greyprism.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 </Project>

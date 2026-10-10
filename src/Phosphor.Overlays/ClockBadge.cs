@@ -34,6 +34,12 @@ public sealed class ClockBadge : IBadge, IOverlayParams
         new("layer", SceneParamKind.Choice, 0f, 0f, 1f, "слой (поверх / под эффектами)", Layers),
         new("drift", SceneParamKind.Bool, 1f, 0f, 1f, "защита от выгорания"),
         new("blink", SceneParamKind.Bool, 1f, 0f, 1f, "мигание двоеточия"),
+        new("plate", SceneParamKind.Choice, 0f, 0f, 2f, "подложка", BadgeEffects.Plates),
+        new("plateColor", SceneParamKind.Choice, 0f, 0f, 2f, "цвет подложки", BadgeEffects.PlateColors),
+        new("plateOpacity", SceneParamKind.Float, 0.5f, 0f, 1f, "прозрачность подложки"),
+        new("shadow", SceneParamKind.Float, 0f, 0f, 1f, "тень"),
+        new("glow", SceneParamKind.Float, 0f, 0f, 1f, "свечение"),
+        new("silhouette", SceneParamKind.Bool, 0f, 0f, 1f, "силуэт (одним цветом)"),
     };
 
     private const int BufLen = 16;                  // длиннейший шаблон — 11 символов
@@ -53,6 +59,8 @@ public sealed class ClockBadge : IBadge, IOverlayParams
     public int Rows { get; private set; } = 1;
     public string? ImagePath => null;
     public BadgePlacement Placement { get; private set; }
+    /// <summary>Подложка, тень, свечение, силуэт (хост читает через badge is ClockBadge c ? c.Effects).</summary>
+    public BadgeEffects Effects { get; private set; }
     public long Version { get; private set; }
 
     public ClockBadge()
@@ -79,6 +87,7 @@ public sealed class ClockBadge : IBadge, IOverlayParams
             options.GetBool("drift", true),
             Math.Clamp(options.GetFloat("stroke", 1.5f), 0f, 4f),
             options.GetString("font", ""));
+        Effects = BadgeEffects.Read(options, _fg);
 
         // Ширина под формат фиксирована: от длины шаблона, не от времени
         _len = Patterns[_fmt].Length;

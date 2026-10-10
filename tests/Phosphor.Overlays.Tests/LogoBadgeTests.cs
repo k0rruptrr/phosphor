@@ -45,7 +45,7 @@ public class LogoBadgeTests
         var b = new LogoBadge();
         b.Configure(new SceneOptions());
         Assert.NotNull(b.ImagePath);
-        Assert.EndsWith(Path.Combine("logo", "phosphor.png"), b.ImagePath!);
+        Assert.EndsWith(Path.Combine("logo", "greyprism.png"), b.ImagePath!);
         Assert.False(b.FileMissing);
         Assert.Equal("tr", b.Placement.Anchor);
         Assert.False(b.Placement.Over);                 // по умолчанию под эффектами
