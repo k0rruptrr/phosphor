@@ -140,3 +140,24 @@ public sealed record SatTvChannel(string Name, double FreqMhz, char Pol, int Sym
 /// <summary>"sattv" после слияния — спутники с непустыми списками, в порядке конфига.</summary>
 public sealed record SatTvSetSnapshot(IReadOnlyList<SatTvSatellite> Satellites, DateTimeOffset FetchedAt, bool FromCache)
     : DataSnapshot(FetchedAt, FromCache);
+
+/// <summary>
+/// "fires" — активные пожары за 24 ч вокруг города (NASA FIRMS, VIIRS NOAA-20, глобальный CSV без ключа, обновление раз в 3 ч).
+/// Центр — город из конфига, округлённый до 0.5° (примерное местоположение); в квадрате ±RadiusKm.
+/// </summary>
+public sealed record FireSnapshot(string CenterName, double CenterLat, double CenterLon, double RadiusKm,
+    IReadOnlyList<FirePoint> Points, DateTimeOffset FetchedAt, bool FromCache) : DataSnapshot(FetchedAt, FromCache);
+
+/// <summary>Очаг. Frp — мощность, МВт; BrightK — яркостная температура, K; Confidence — "low" | "nominal" | "high".</summary>
+public sealed record FirePoint(double Lat, double Lon, float Frp, float BrightK, string Confidence, DateTimeOffset AcquiredAt, bool Day);
+
+/// <summary>
+/// "flights" — самолёты вокруг точки (ADS-B, adsb.lol, опрос раз в 60 с). Если над городом меньше 3 самолётов в воздухе —
+/// источник берёт «дальнюю станцию» из конфига по кругу: Remote = true, StationName — её имя.
+/// </summary>
+public sealed record FlightSnapshot(string StationName, bool Remote, double CenterLat, double CenterLon, double RadiusNm,
+    IReadOnlyList<Aircraft> Aircraft, DateTimeOffset FetchedAt, bool FromCache) : DataSnapshot(FetchedAt, FromCache);
+
+/// <summary>Самолёт. AltFt &lt; 0 — на земле. Callsign/Type — "" если нет. TrackDeg — курс, 0 = север, по часовой.</summary>
+public sealed record Aircraft(string Hex, string Callsign, string Type, double Lat, double Lon, int AltFt,
+    float SpeedKt, float TrackDeg, float VertRateFpm);

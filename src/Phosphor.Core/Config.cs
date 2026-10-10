@@ -272,6 +272,12 @@ public sealed class NetworkConfig
     public List<string> Satellite { get; set; } = new() { "meteosat", "himawari", "viirs" };
     /// <summary>Спутники для сцены «сат-ТВ» — id страниц KingOfSat (en.kingofsat.info/sat-&lt;id&gt;). Список по умолчанию задаёт Phosphor.Data (SatTvCatalog.DefaultIds), здесь пусто = он.</summary>
     public List<string> SatTv { get; set; } = new();
+    /// <summary>Пожары NASA вокруг города: полуширина квадрата, км (100..1500).</summary>
+    public double FireRadiusKm { get; set; } = 500;
+    /// <summary>Радар самолётов: радиус, морские мили (20..250).</summary>
+    public double FlightRadiusNm { get; set; } = 100;
+    /// <summary>«Дальние станции» радара, если над городом пусто: "ИМЯ:широта:долгота".</summary>
+    public List<string> FlightStations { get; set; } = new() { "HELSINKI-VANTAA:60.32:24.95", "RIGA:56.92:23.97", "BELGRADE:44.82:20.29", "ISTANBUL:41.27:28.75" };
     /// <summary>Координаты города (WGS84). Заданы — геокодер не нужен (например, когда его режет сеть/провайдер).
     /// null — берутся из геокодера, а при его недоступности из последнего кеша погоды.</summary>
     public double? Lat { get; set; }
