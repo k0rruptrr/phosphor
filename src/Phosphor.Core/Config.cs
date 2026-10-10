@@ -105,13 +105,13 @@ public sealed class PhosphorConfig
     }
 
     /// <summary>
-    /// Убрать из стадий crt всех пресетов ключи curvature, cornerRadius, vignette (и такие же ключи внутри "mod"):
-    /// геометрию кинескопа теперь задаёт экран (screen). Идемпотентно. true — что-то удалено (конфиг стоит сохранить);
+    /// Убрать из стадий crt всех пресетов ключи curvature, cornerRadius, vignette, mask (и такие же ключи внутри "mod"):
+    /// геометрию кинескопа и маску теперь задаёт экран (screen). Идемпотентно. true — что-то удалено (конфиг стоит сохранить);
     /// notes — по строке на пресет. Стадии не-crt не трогаются.
     /// </summary>
     public bool MigrateScreen(List<string> notes)
     {
-        string[] moved = { "curvature", "cornerRadius", "vignette" };
+        string[] moved = { "curvature", "cornerRadius", "vignette", "mask" };
         bool changed = false;
         foreach (var name in Filters.Presets.Keys.ToList())
         {
@@ -132,7 +132,7 @@ public sealed class PhosphorConfig
             }
             if (removed == 0) continue;
             Filters.Presets[name] = JsonDocument.Parse(arr.ToJsonString()).RootElement.Clone();
-            notes.Add($"пресет '{name}': из crt убрано {removed} ключ(ей) curvature/cornerRadius/vignette — геометрию теперь задаёт экран");
+            notes.Add($"пресет '{name}': из crt убрано {removed} ключ(ей) curvature/cornerRadius/vignette/mask — геометрию и маску теперь задаёт экран");
             changed = true;
         }
         return changed;
@@ -200,7 +200,7 @@ public sealed class PhosphorConfig
                         { "id": "crt", "mod": { "brightness": { "src": "breath", "amount": 0.12 } } } ],
           "amber":    [ { "id": "mono", "contrast": 1.15 }, { "id": "phosphor", "color": "amber", "persistence": 0.86, "mod": { "persistence": { "src": "night", "amount": 0.08 } } },
                         { "id": "crt", "mod": { "brightness": { "src": "breath", "amount": 0.1 } } } ],
-          "kassette": [ { "id": "vhs", "mod": { "tracking": { "src": "fatigue", "amount": 0.6 } } },
+          "kassette": [ { "id": "vhs", "badTracking": 0.35, "lumaRes": 520, "chromaRes": 60, "mod": { "tracking": { "src": "fatigue", "amount": 0.6 } } },
                         { "id": "chroma", "amount": 1.5 },
                         { "id": "crt" } ],
           "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt" } ],
@@ -397,9 +397,16 @@ public sealed class ScreenConfig
     public float BezelSize { get; set; } = 0.06f;
     /// <summary>Отсвет картинки на внутренней фаске рамки.</summary>
     public float BezelGlow { get; set; } = 0.5f;
+    /// <summary>Сила маски кинескопа (раньше — параметр mask стадии crt).</summary>
+    public float Mask { get; set; } = 0.3f;
+    /// <summary>Тип маски: "shadow" (триады по вертикали), "trinitron" (апертурная решётка + две нити поперёк), "diagonal" (триады со сдвигом по диагонали).</summary>
+    public string MaskType { get; set; } = "shadow";
+    /// <summary>Чересстрочность: поля через строку (гребёнка на движении), 0 = выкл.</summary>
+    public float Interlace { get; set; } = 0f;
 
     public static readonly string[] BezelStyles = { "none", "thin", "tv", "monitor" };
     public static readonly string[] BezelColors = { "black", "graphite", "beige" };
+    public static readonly string[] MaskTypes = { "shadow", "trinitron", "diagonal" };
 
     public static readonly IReadOnlyList<SceneParamSpec> Specs = new SceneParamSpec[]
     {
@@ -412,6 +419,9 @@ public sealed class ScreenConfig
         new("bezelColor", SceneParamKind.Choice, 0, 0, 2, "цвет пластика", BezelColors),
         new("bezelSize", SceneParamKind.Float, 0.06f, 0.02f, 0.15f, "толщина рамки"),
         new("bezelGlow", SceneParamKind.Float, 0.5f, 0f, 1f, "отсвет на рамке"),
+        new("mask", SceneParamKind.Float, 0.3f, 0f, 1f, "маска кинескопа"),
+        new("maskType", SceneParamKind.Choice, 0, 0, 2, "тип маски", MaskTypes),
+        new("interlace", SceneParamKind.Float, 0f, 0f, 1f, "чересстрочность"),
         new("trail", SceneParamKind.Float, 0f, 0f, 0.9f, "шлейф (моушн-блюр)"),
     };
 
@@ -427,6 +437,9 @@ public sealed class ScreenConfig
         "bezelColor" => Math.Max(0, Array.IndexOf(BezelColors, BezelColor)),
         "bezelSize" => BezelSize,
         "bezelGlow" => BezelGlow,
+        "mask" => Mask,
+        "maskType" => Math.Max(0, Array.IndexOf(MaskTypes, MaskType)),
+        "interlace" => Interlace,
         "trail" => Trail,
         _ => throw new ArgumentException($"нет параметра экрана '{name}'", nameof(name)),
     };
@@ -447,6 +460,9 @@ public sealed class ScreenConfig
             case "bezelColor": BezelColor = BezelColors[(int)Math.Round(v)]; break;
             case "bezelSize": BezelSize = v; break;
             case "bezelGlow": BezelGlow = v; break;
+            case "mask": Mask = v; break;
+            case "maskType": MaskType = MaskTypes[(int)Math.Round(v)]; break;
+            case "interlace": Interlace = v; break;
             case "trail": Trail = v; break;
         }
     }
@@ -456,6 +472,7 @@ public sealed class ScreenConfig
     {
         if (Array.IndexOf(BezelStyles, Bezel) < 0) { warnings.Add($"screen.bezel='{Bezel}' неизвестна, ставлю none"); Bezel = "none"; }
         if (Array.IndexOf(BezelColors, BezelColor) < 0) { warnings.Add($"screen.bezelColor='{BezelColor}' неизвестен, ставлю black"); BezelColor = "black"; }
+        if (Array.IndexOf(MaskTypes, MaskType) < 0) { warnings.Add($"screen.maskType='{MaskType}' неизвестен, ставлю shadow"); MaskType = "shadow"; }
         foreach (var s in Specs)
             if (s.Kind == SceneParamKind.Float) Set(s.Name, Get(s.Name));
     }

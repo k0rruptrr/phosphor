@@ -10,7 +10,6 @@ uniform int uFrame;
 
 uniform float p_scanlines;
 uniform float p_scanlinePeriod;
-uniform float p_mask;
 uniform float p_bloom;
 uniform float p_bloomRadius;
 uniform float p_flicker;
@@ -36,25 +35,12 @@ void main() {
     float scan = mix(1.0, prof, p_scanlines * glowAtten);
     color *= scan;
 
-    // 4. Апертурная маска: вертикальные триады по 3 пикселя, среднее по столбцам сохраняется.
-    int col = int(mod(floor(gl_FragCoord.x), 3.0));
-    vec3 tri;
-    if (col == 0) {
-        tri = vec3(1.0, 0.5, 0.5);
-    } else if (col == 1) {
-        tri = vec3(0.5, 1.0, 0.5);
-    } else {
-        tri = vec3(0.5, 0.5, 1.0);
-    }
-    vec3 maskMul = mix(vec3(1.0), tri * 1.5, p_mask);
-    color *= maskMul;
-
-    // 5. Мерцание около 12 Гц с небольшой случайной составляющей по кадрам.
+    // 4. Мерцание около 12 Гц с небольшой случайной составляющей по кадрам.
     float noise = fract(sin(float(uFrame) * 12.9898) * 43758.5453);
     float wob = 0.7 * (0.5 + 0.5 * sin(TAU * 12.0 * uTime)) + 0.3 * noise;
     color *= 1.0 - p_flicker * wob;
 
-    // 6. Яркость и выход. Значения не обрезаются, обрезка будет на выводе.
+    // 5. Яркость и выход. Значения не обрезаются, обрезка будет на выводе.
     color *= p_brightness;
     fragColor = vec4(color, 1.0);
 }

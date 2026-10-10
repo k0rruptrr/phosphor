@@ -8,7 +8,7 @@ public class CrtFilterTests
 {
     private static readonly string[] ParamNames =
     {
-        "scanlines", "scanlinePeriod", "mask",
+        "scanlines", "scanlinePeriod",
         "bloom", "bloomRadius", "flicker", "brightness",
     };
 
@@ -16,7 +16,6 @@ public class CrtFilterTests
     {
         ["scanlines"] = 0.5f,
         ["scanlinePeriod"] = 3f,
-        ["mask"] = 0.3f,
         ["bloom"] = 0.8f,
         ["bloomRadius"] = 6f,
         ["flicker"] = 0.03f,
@@ -38,10 +37,11 @@ public class CrtFilterTests
     }
 
     [Fact]
-    public void Params_HasExactlyTheSevenExpectedNames()
+    public void Params_HasExactlyTheSixExpectedNames_NoMask()
     {
         var names = new CrtFilter().Params.Select(p => p.Name).ToArray();
         Assert.Equal(ParamNames, names);
+        Assert.DoesNotContain("mask", names);
     }
 
     [Fact]

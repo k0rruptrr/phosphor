@@ -7,7 +7,9 @@ namespace Phosphor.Gfx;
 /// «Корпус монитора» — последний проход перед выводом: изогнутый проём рамки, широкая фаска, отсвет картинки
 /// на пластике, утопленное стекло с тенью у краёв, отлив стекла. Один на все пресеты. Картинка не зависит от времени.
 /// Геометрия: окно рамки → кривизна (барабан, та же функция для проёма и для картинки) → проём/стекло/кромка.
-/// Не больше двух проходов: уменьшение входа (1/8) для отсвета и основной проход.
+/// Маска кинескопа (тип shadow/trinitron/diagonal) — поверх картинки стекла, до блика; чересстрочность — там же,
+/// по прошлому кадру входа (отдельный RenderTarget). Не больше трёх проходов: уменьшение входа (1/8) для отсвета,
+/// основной проход, копия входа в прошлый кадр.
 /// RenderTarget пересоздаются только при смене размера; на кадр аллокаций нет.
 /// </summary>
 public sealed class ScreenPass : IDisposable
@@ -27,9 +29,14 @@ public sealed class ScreenPass : IDisposable
     private readonly uint _progCopy;
     private readonly int _locTex, _locSmall, _locOut, _locWin, _locAspect, _locCurv, _locOverscan, _locCornerPx, _locKromka;
     private readonly int _locVig, _locGlare, _locGlow, _locStyle, _locB, _locOuterR, _locPlastic, _locFaceW;
+    private readonly int _locPrev, _locIl, _locLine, _locPar, _locMask, _locMaskType, _locThreadPx;
     private readonly int _locCopyTex;
-    private RenderTarget? _main, _small;
+    private RenderTarget? _main, _small, _prev;
     private int _w, _h;
+    /// <summary>В _prev лежит прошлый кадр входа (после первого кадра и смены размера — нет).</summary>
+    private bool _hasPrev;
+    /// <summary>Номер кадра: чётность поля для чересстрочности.</summary>
+    private int _frame;
 
     private const string Frag = """
         #version 330 core
@@ -53,6 +60,13 @@ public sealed class ScreenPass : IDisposable
         uniform float uFaceW;       // ширина фаски, px (0 — без фаски)
         uniform float uOuterR;      // радиус внешних углов корпуса, px (0 — прямые)
         uniform vec3 uPlastic;      // базовый цвет пластика
+        uniform sampler2D uPrev;    // прошлый кадр входа (для чересстрочности)
+        uniform float uIl;          // чересстрочность: 0 — выкл
+        uniform float uLine;        // строка развёртки, px выхода (2 px на 1080)
+        uniform int uPar;           // чётность поля текущего кадра (0/1)
+        uniform float uMask;        // сила маски кинескопа
+        uniform int uMaskType;      // 0 shadow, 1 trinitron, 2 diagonal
+        uniform float uThreadPx;    // толщина тёмных нитей trinitron, px выхода
 
         const float BEND = 0.6;
         const float EDGE_SOFT_PX = 1.5;
@@ -84,6 +98,37 @@ public sealed class ScreenPass : IDisposable
             vec3 acc = vec3(0.0);
             for (int i = 0; i < 9; i++) acc += texture(uSmall, uv + BLUR_OFF[i] * rad).rgb;
             return acc / 9.0;
+        }
+
+        // Триада маски для канала-лидера leader (0 R, 1 G, 2 B): лидер 1.0, остальные 0.5, среднее по 3 px сохраняется.
+        vec3 triad(float leader, float depth) {
+            vec3 tri = vec3(leader == 0.0 ? 1.0 : 0.5, leader == 1.0 ? 1.0 : 0.5, leader == 2.0 ? 1.0 : 0.5);
+            return mix(vec3(1.0), tri * 1.5, depth);
+        }
+
+        // Маска кинескопа в пикселях выхода. shadow — триады по x; trinitron — полосы без горизонтальной структуры,
+        // depth ×0.8, плюс две тёмные нити на 1/3 и 2/3 высоты окна стекла; diagonal — канал (x + y) mod 3
+        // с размытием [1/4 1/2 1/4] по x.
+        vec3 maskMul() {
+            float fx = floor(gl_FragCoord.x);
+            float fy = floor(gl_FragCoord.y);
+            vec3 m;
+            if (uMaskType == 2) {
+                m = 0.25 * triad(mod(fx - 1.0 + fy, 3.0), uMask)
+                  + 0.5 * triad(mod(fx + fy, 3.0), uMask)
+                  + 0.25 * triad(mod(fx + 1.0 + fy, 3.0), uMask);
+            } else if (uMaskType == 1) {
+                m = triad(mod(fx, 3.0), 0.8 * uMask);
+                // Нити — по строкам пикселей: строка = floor(линия), толщина uThreadPx (нечётная — точное число строк).
+                float y0 = uWin.y, hW = uWin.w - uWin.y;
+                float fr = floor(gl_FragCoord.y);
+                float dA = abs(fr - floor(y0 + hW / 3.0));
+                float dB = abs(fr - floor(y0 + 2.0 * hW / 3.0));
+                if (min(dA, dB) <= 0.5 * (uThreadPx - 1.0)) m *= 1.0 - 0.30;   // нити — физические: фиксированные 30%, не от силы маски
+            } else {
+                m = triad(mod(fx, 3.0), uMask);
+            }
+            return m;
         }
 
         // Средний цвет картинки: сетка 3×3 по уменьшенной копии. Для подкраски рамки свечением экрана.
@@ -181,7 +226,16 @@ public sealed class ScreenPass : IDisposable
             } else {
                 // Стекло: картинка, утопленная тень у края, виньетка, отлив.
                 vec2 pu = picUv(q);
-                col = texture(uTex, clamp(pu, 0.0, 1.0)).rgb;
+                vec2 puc = clamp(pu, 0.0, 1.0);
+                col = texture(uTex, puc).rgb;
+
+                // Чересстрочность: строки текущего поля — текущий кадр, другого — смесь с прошлым кадром,
+                // и они чуть темнее (мерцание поля). На неподвижной картинке ничего не меняется (кроме мерцания).
+                if (uIl > 0.0) {
+                    vec3 pr = texture(uPrev, puc).rgb;
+                    int li = int(floor(gl_FragCoord.y / uLine));
+                    if ((li % 2) != uPar) col = mix(col, pr, uIl) * (1.0 - 0.12 * uIl);
+                }
 
                 // Глубокая внутренняя тень у края проёма: стекло утоплено, ~3.5% высоты.
                 if (uStyle > 0) {
@@ -193,6 +247,9 @@ public sealed class ScreenPass : IDisposable
                 vec2 vq = pu - 0.5;
                 float ve = dot(vq, vq) * 4.0;
                 col *= 1.0 - uVig * smoothstep(0.3, 1.5, ve);
+
+                // Маска кинескопа — поверх картинки, до блика.
+                if (uMask > 0.0) col *= maskMul();
 
                 // Отлив стекла: широкий и мягкий, светлее и серее в центре/вверху, к краям гаснет.
                 // Смешивание экранное c + r·(1 − c); на белом входе не меняет картинку.
@@ -239,6 +296,13 @@ public sealed class ScreenPass : IDisposable
         _locFaceW = gl.GetUniformLocation(_prog, "uFaceW");
         _locOuterR = gl.GetUniformLocation(_prog, "uOuterR");
         _locPlastic = gl.GetUniformLocation(_prog, "uPlastic");
+        _locPrev = gl.GetUniformLocation(_prog, "uPrev");
+        _locIl = gl.GetUniformLocation(_prog, "uIl");
+        _locLine = gl.GetUniformLocation(_prog, "uLine");
+        _locPar = gl.GetUniformLocation(_prog, "uPar");
+        _locMask = gl.GetUniformLocation(_prog, "uMask");
+        _locMaskType = gl.GetUniformLocation(_prog, "uMaskType");
+        _locThreadPx = gl.GetUniformLocation(_prog, "uThreadPx");
         _locCopyTex = gl.GetUniformLocation(_progCopy, "uTex");
     }
 
@@ -265,6 +329,16 @@ public sealed class ScreenPass : IDisposable
         float outerR = style switch { 2 => 0.06f * outH, 3 => 0.05f * outH, 1 => 0.03f * outH, _ => 0f };
         float faceW = style switch { 2 => TvFaceShare * b, 3 => MonitorFaceShare * b, _ => 0f };
         float kromka = bezel ? KromkaShare * b : 0f;
+
+        // Прошлый кадр входа нужен только чересстрочности. Interlace = 0 — ни копии, ни RT; при включении
+        // первый кадр копирует вход (эффекта нет), старого следа не остаётся.
+        bool il = cfg.Interlace > 0f;
+        if (!il) _hasPrev = false;
+        else
+        {
+            _prev ??= new RenderTarget(_gl, outW, outH);
+            if (!_hasPrev) CopyToPrev(tex);
+        }
 
         // Проход 1: уменьшенная копия входа — только если есть рамка и отсвет.
         if (bezel && cfg.BezelGlow > 0f)
@@ -303,13 +377,43 @@ public sealed class ScreenPass : IDisposable
         _gl.Uniform1(_locFaceW, faceW);
         _gl.Uniform1(_locOuterR, outerR);
         _gl.Uniform3(_locPlastic, pr, pg, pb);
+        if (il)
+        {
+            _gl.ActiveTexture(TextureUnit.Texture2);
+            _gl.BindTexture(TextureTarget.Texture2D, _prev!.Texture);
+            _gl.Uniform1(_locPrev, 2);
+        }
+        _gl.Uniform1(_locIl, il ? cfg.Interlace : 0f);
+        _gl.Uniform1(_locLine, 2f * outH / 1080f);
+        _gl.Uniform1(_locPar, _frame & 1);
+        _gl.Uniform1(_locMask, cfg.Mask);
+        _gl.Uniform1(_locMaskType, Math.Max(0, Array.IndexOf(ScreenConfig.MaskTypes, cfg.MaskType)));
+        _gl.Uniform1(_locThreadPx, Math.Max(1f, outH / 1080f));
         GlUtil.DrawFullscreen(_gl);
+
+        // Вход этого кадра — прошлым для следующего (только при чересстрочности).
+        if (il) CopyToPrev(tex);
+        _frame++;
         return _main.Texture;
     }
 
-    /// <summary>Выключено: геометрия, виньетка, блик и рамка не заданы — кадр проходит без изменений.</summary>
+    /// <summary>Копия входа в _prev (прошлый кадр для чересстрочности).</summary>
+    private void CopyToPrev(uint tex)
+    {
+        _prev!.Bind();
+        _gl.Disable(EnableCap.Blend);
+        _gl.UseProgram(_progCopy);
+        _gl.ActiveTexture(TextureUnit.Texture0);
+        _gl.BindTexture(TextureTarget.Texture2D, tex);
+        _gl.Uniform1(_locCopyTex, 0);
+        GlUtil.DrawFullscreen(_gl);
+        _hasPrev = true;
+    }
+
+    /// <summary>Выключено: геометрия, виньетка, блик, рамка, маска и чересстрочность не заданы — кадр проходит без изменений.</summary>
     private static bool IsOff(ScreenConfig c) =>
-        c.Curvature <= 0f && c.CornerRadius <= 0f && c.Vignette <= 0f && c.Overscan <= 0f && c.Glare <= 0f && c.Bezel == "none";
+        c.Curvature <= 0f && c.CornerRadius <= 0f && c.Vignette <= 0f && c.Overscan <= 0f && c.Glare <= 0f && c.Bezel == "none"
+        && c.Mask <= 0f && c.Interlace <= 0f;
 
     /// <summary>Базовый цвет пластика; beige умножен на 0.45, чтобы в тёмной комнате не светился.</summary>
     private static (float r, float g, float b) PlasticColor(string name) => name switch
@@ -324,8 +428,11 @@ public sealed class ScreenPass : IDisposable
         if (_main is not null && _w == outW && _h == outH) return;
         _main?.Dispose();
         _small?.Dispose();
+        _prev?.Dispose();
+        _prev = null;
         _main = new RenderTarget(_gl, outW, outH);
         _small = new RenderTarget(_gl, Math.Max(1, outW / SmallDiv), Math.Max(1, outH / SmallDiv));
+        _hasPrev = false;
         _w = outW; _h = outH;
     }
 
@@ -333,7 +440,8 @@ public sealed class ScreenPass : IDisposable
     {
         _main?.Dispose();
         _small?.Dispose();
-        _main = null; _small = null;
+        _prev?.Dispose();
+        _main = null; _small = null; _prev = null;
         _gl.DeleteProgram(_prog);
         _gl.DeleteProgram(_progCopy);
     }

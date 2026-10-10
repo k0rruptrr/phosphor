@@ -874,6 +874,7 @@ internal sealed class SettingsForm : Form
         var groups = new (string Title, string[] Names, bool Body)[]
         {
             ("Геометрия", new[] { "curvature", "cornerRadius", "vignette", "overscan" }, true),
+            ("Кинескоп", new[] { "mask", "maskType", "interlace" }, true),
             ("Стекло", new[] { "glare" }, true),
             ("Корпус", new[] { "bezel", "bezelColor", "bezelSize", "bezelGlow" }, true),
             ("Шлейф", new[] { "trail" }, false),

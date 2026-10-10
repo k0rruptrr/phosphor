@@ -9,6 +9,7 @@ public class VhsFilterTests
     {
         "jitter", "tracking", "bleed", "noise", "rgbShift",
         "bottomSkew", "wobble", "saturation", "dropouts",
+        "badTracking", "bandSpeed", "iqShift", "chromaClip", "lumaRes", "chromaRes",
     };
 
     private static readonly Dictionary<string, float> Defaults = new()
@@ -22,6 +23,12 @@ public class VhsFilterTests
         ["wobble"] = 0.3f,
         ["saturation"] = 0.85f,
         ["dropouts"] = 0.2f,
+        ["badTracking"] = 0f,
+        ["bandSpeed"] = 1f,
+        ["iqShift"] = 1.5f,
+        ["chromaClip"] = 0.4f,
+        ["lumaRes"] = 1920f,
+        ["chromaRes"] = 400f,
     };
 
     private const string ShaderName = "vhs.frag";
@@ -33,7 +40,7 @@ public class VhsFilterTests
     }
 
     [Fact]
-    public void Params_HasExactlyTheNineExpectedNames()
+    public void Params_HasExactlyTheExpectedNames()
     {
         var names = new VhsFilter().Params.Select(p => p.Name).ToArray();
         Assert.Equal(ParamNames, names);
@@ -410,5 +417,172 @@ public class VhsFilterTests
             Assert.True(gap >= 20.0, $"пауза между эпизодами {gap:F1} с (с {active[i]:F1} с)");
         }
         Assert.True(gaps >= 2, $"найдено пауз между эпизодами: {gaps}");
+    }
+
+    // ---- Плохой трекинг, разъезд I/Q, обрезка цветности: все прочие эффекты выключены ----
+
+    private static Dictionary<string, float> Neutral(params (string k, float v)[] kv)
+    {
+        var d = new Dictionary<string, float>
+        {
+            ["jitter"] = 0f, ["noise"] = 0f, ["wobble"] = 0f, ["tracking"] = 0f,
+            ["rgbShift"] = 0f, ["dropouts"] = 0f, ["bottomSkew"] = 0f, ["bleed"] = 0f,
+            ["saturation"] = 1f, ["iqShift"] = 0f, ["chromaClip"] = 0f, ["badTracking"] = 0f,
+        };
+        foreach (var (k, v) in kv) d[k] = v;
+        return d;
+    }
+
+    /// <summary>Сдвиг строки: центроид белых пикселей (яркость > 0.5) минус базовая линия. 0, если белых мало.</summary>
+    private static float WhiteShift(float[,,] img, int y, float baseline)
+    {
+        int w = img.GetLength(1);
+        double s = 0;
+        int n = 0;
+        for (int x = 0; x < w; x++)
+            if (GpuHarness.Luma(img, x, y) > 0.5f) { s += x; n++; }
+        return n < 200 ? 0f : (float)(s / n - baseline);
+    }
+
+    /// <summary>Строка с максимальным |сдвигом| и сам сдвиг.</summary>
+    private static (int row, float shift) MaxWhiteShift(float[,,] img, float baseline)
+    {
+        int best = 0;
+        float bestS = 0f;
+        for (int y = 0; y < img.GetLength(0); y++)
+        {
+            float s = WhiteShift(img, y, baseline);
+            if (Math.Abs(s) > Math.Abs(bestS)) { bestS = s; best = y; }
+        }
+        return (best, bestS);
+    }
+
+    [Fact]
+    public void BadTracking_WhiteBar_ShiftsRowsSideways_AndRollsDown()
+    {
+        const int W = 1920, H = 180;
+        const int x0 = 760, x1 = 1160;               // белая полоса 400 px на чёрном
+        const float baseline = (x0 + x1 - 1) / 2f;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => { float v = x >= x0 && x < x1 ? 1f : 0f; return (v, v, v); });
+        using var f = gpu.Create<VhsFilter>();
+        var o = Neutral(("badTracking", 1f));
+
+        var (r0, s0) = MaxWhiteShift(gpu.Run(f, 0, o), baseline);
+        Assert.True(Math.Abs(s0) > 20f, $"максимальный сдвиг полосы {s0:F1} px на строке {r0}, нужно > 20");
+
+        // 240 кадров при bandSpeed 1 и 60 fps: полоса проходит половину кадра, строка максимума уходит вниз
+        var (r1, _) = MaxWhiteShift(gpu.Run(f, 240, o), baseline);
+        int down = ((r1 - r0) % H + H) % H;
+        Assert.True(down >= 0.3 * H, $"строка максимума сместилась вниз на {down} из {H} строк (нужно ≥ 30%)");
+    }
+
+    [Fact]
+    public void IqShift_TintDiffersAcrossGrayBarEdges()
+    {
+        const int W = 640, H = 1080;                 // H = 1080: сдвиг I/Q ровно iqShift px
+        const int y = 540;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, yy) => x >= 200 && x < 440 ? (0.5f, 0.5f, 0.5f) : (0f, 0f, 1f));
+        using var f = gpu.Create<VhsFilter>();
+
+        // Цветность (R−G, B−G) внутри серой полосы у левого (x=201) и правого (x=437) края
+        (float, float) Chroma(float[,,] img, int x) =>
+            (img[y, x, 0] - img[y, x, 1], img[y, x, 2] - img[y, x, 1]);
+        static float Diff((float a, float b) p, (float a, float b) q) =>
+            MathF.Max(MathF.Abs(p.a - q.a), MathF.Abs(p.b - q.b));
+
+        var none = gpu.Run(f, 0, Neutral(("iqShift", 0f)));
+        var shifted = gpu.Run(f, 0, Neutral(("iqShift", 3f)));
+
+        float d0 = Diff(Chroma(none, 201), Chroma(none, 437));
+        float d3 = Diff(Chroma(shifted, 201), Chroma(shifted, 437));
+        Assert.True(d0 <= 0.01f, $"при iqShift=0 края серой полосы различаются на {d0:F3}");
+        Assert.True(d3 > 0.15f, $"при iqShift=3 разность цветности краёв {d3:F3}, нужно > 0.15");
+    }
+
+    [Fact]
+    public void ChromaClip_ReducesSaturatedRed_KeepsGray()
+    {
+        const int W = 320, H = 180;
+        using var gpu = new GpuHarness(W, H);
+        using var f = gpu.Create<VhsFilter>();
+
+        static float Sat(float[,,] img)
+        {
+            float r = img[90, 160, 0], g = img[90, 160, 1], b = img[90, 160, 2];
+            return MathF.Max(r, MathF.Max(g, b)) - MathF.Min(r, MathF.Min(g, b));
+        }
+
+        gpu.SetInput((x, y) => (1f, 0f, 0f));
+        float satNone = Sat(gpu.Run(f, 0, Neutral(("chromaClip", 0f))));
+        float satClip = Sat(gpu.Run(f, 0, Neutral(("chromaClip", 1f))));
+        Assert.True(satNone > 0.9f, $"чистый красный без обрезки: насыщенность {satNone:F3}");
+        Assert.True(satClip < satNone - 0.3f, $"обрезка цветности: {satClip:F3} при {satNone:F3} без обрезки");
+
+        gpu.SetInput((x, y) => (0.5f, 0.5f, 0.5f));
+        float satGray = Sat(gpu.Run(f, 0, Neutral(("chromaClip", 1f))));
+        Assert.True(satGray < 0.01f, $"серый не должен менять цвет при обрезке: насыщенность {satGray:F3}");
+    }
+
+    /// <summary>Ширина перехода яркости по строке y от 10% до 90% (первое пересечение вверх), в пикселях.</summary>
+    private static int EdgeWidth(float[,,] img, int y)
+    {
+        int w = img.GetLength(1);
+        int x10 = -1, x90 = -1;
+        for (int x = 0; x < w; x++)
+        {
+            float l = GpuHarness.Luma(img, x, y);
+            if (x10 < 0 && l >= 0.1f) x10 = x;
+            if (x90 < 0 && l >= 0.9f) { x90 = x; break; }
+        }
+        return x90 - x10;
+    }
+
+    [Fact]
+    public void ChromaRes40_RednessSpreadsOver30PxAroundRedBar()
+    {
+        const int W = 1920, H = 240;
+        const int bx0 = 958, bx1 = 962;              // красная вертикальная полоса 4 px на сером
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => x >= bx0 && x < bx1 ? (1f, 0.5f, 0.5f) : (0.5f, 0.5f, 0.5f));
+        using var f = gpu.Create<VhsFilter>();
+        var img = gpu.Run(f, 0, Neutral(("chromaRes", 40f)));
+
+        // Цветность по оси I (YIQ): не зависит от яркости, на сером равна 0, у красного положительна
+        const int y = 120;
+        float Red(int x) => 0.596f * img[y, x, 0] - 0.274f * img[y, x, 1] - 0.322f * img[y, x, 2];
+        float peak = 0f;
+        for (int x = 0; x < W; x++) peak = Math.Max(peak, Red(x));
+        float level = 0.1f * peak;                        // ширина на уровне 10% пика
+        int left = 0, right = 0;
+        for (int x = bx0 - 1; x >= 0 && Red(x) >= level; x--) left++;
+        for (int x = bx1; x < W && Red(x) >= level; x++) right++;
+        Assert.True(left > 30, $"красноватость слева шире {left} px, нужно > 30");
+        Assert.True(right > 30, $"красноватость справа шире {right} px, нужно > 30");
+    }
+
+    [Fact]
+    public void LumaResDefault_EdgeStaysSharp()
+    {
+        const int W = 1920, H = 180;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => x < 960 ? (0f, 0f, 0f) : (1f, 1f, 1f));
+        using var f = gpu.Create<VhsFilter>();
+        var img = gpu.Run(f, 0, Neutral(("lumaRes", 1920f), ("chromaRes", 400f)));
+        int width = EdgeWidth(img, 90);
+        Assert.True(width <= 3, $"ширина перехода яркости при lumaRes 1920: {width} px, нужно ≤ 3");
+    }
+
+    [Fact]
+    public void LumaRes520_EdgeIsBlurred()
+    {
+        const int W = 1920, H = 180;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => x < 960 ? (0f, 0f, 0f) : (1f, 1f, 1f));
+        using var f = gpu.Create<VhsFilter>();
+        var img = gpu.Run(f, 0, Neutral(("lumaRes", 520f)));
+        int width = EdgeWidth(img, 90);
+        Assert.True(width > 3, $"ширина перехода яркости при lumaRes 520: {width} px, нужно > 3");
     }
 }

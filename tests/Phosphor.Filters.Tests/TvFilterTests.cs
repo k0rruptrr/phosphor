@@ -47,7 +47,7 @@ public class TvFilterTests
         Assert.Equal(0.25f, ps[10].Default);   // T5: двоение (эфир), по умолчанию 0.25
         Assert.Equal(0.02f, ps[11].Default);   // T5: сдвиг двоения, по умолчанию 0.02
         Assert.Equal(1f, ps[12].Default);      // волокна: 1 = как на кассете
-        Assert.Equal(0.5f, ps[8].Default);   // T4: edge = края гашения, по умолчанию 0.5
+        Assert.Equal(0f, ps[8].Default);     // edge = палка слева: артефакт перезаписи, в эфирном SECAM её нет — по умолчанию выкл (решение пользователя)
         Assert.Equal(0f, ps[9].Default);     // T4: бутылки сверху выключены по умолчанию
         Assert.Equal(1f, ps[6].Default);
         Assert.Equal(0.3f, ps[6].Min);

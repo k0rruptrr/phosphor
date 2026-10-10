@@ -5,7 +5,7 @@ using Silk.NET.OpenGL;
 namespace Phosphor.Filters;
 
 /// <summary>
-/// Эмуляция ЭЛТ-сигнала: скан-линии, апертурная маска, bloom, мерцание. Геометрия кинескопа — в ScreenPass.
+/// Эмуляция ЭЛТ-сигнала: скан-линии, bloom, мерцание. Маска кинескопа — в ScreenPass (screen.mask). Геометрия кинескопа — в ScreenPass.
 /// Bloom многопроходный: bright-pass с даунсэмплом в половину размера, сепарабельный гаусс H и V,
 /// затем финальный проход crt.frag добавляет размытый результат (uBloom).
 /// </summary>
@@ -15,7 +15,6 @@ public sealed class CrtFilter : ShaderFilter
     {
         new ParamSpec("scanlines", 0.5f, 0f, 1f, null, "Сила тёмных скан-линий", "строки развёртки"),
         new ParamSpec("scanlinePeriod", 3f, 1f, 8f, null, "Период скан-линий в пикселях выхода", "период строк"),
-        new ParamSpec("mask", 0.3f, 0f, 1f, null, "Сила апертурной решётки (RGB-триады по 3 пикселя)", "маска кинескопа"),
         new ParamSpec("bloom", 0.8f, 0f, 3f, null, "Сила свечения вокруг ярких участков", "свечение"),
         new ParamSpec("bloomRadius", 6f, 0.5f, 16f, null, "Радиус свечения в пикселях входа", "радиус свечения"),
         new ParamSpec("flicker", 0.03f, 0f, 0.3f, null, "Амплитуда мерцания яркости", "мерцание"),

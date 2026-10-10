@@ -59,7 +59,7 @@ internal static class Shot
         // Шлейф (screen.trail) копится по всем кадрам прогона — применяем на каждом кадре, как в RunInteractive
         using var trail = new TrailBuffer(gl);
         trail.Resize(args.Width, args.Height);
-        // Корпус монитора (screen.*) — один проход на финальный кадр, после шлейфа
+        // Корпус монитора (screen.*) — на каждом кадре, после шлейфа и бирок
         using var screenPass = new ScreenPass(gl);
         uint outTex = slot.Output;
         // Дирижёр зафиксирован (снимок детерминирован); смену можно вызвать на кадре N: env PHOSPHOR_SWITCH_AT/_TO/_KIND.
@@ -121,11 +121,12 @@ internal static class Shot
                 phVer++;
             }
             slot.Tick(dt, f * dt, f, audio, director.OrganismFor(0, clock), 1);
+            // Порядок как в RunInteractive: шлейф → бирки «поверх» → корпус (ScreenPass) на КАЖДОМ кадре:
+            // чересстрочность берёт прошлый кадр, поэтому корпус не откладывается на финальный кадр.
             outTex = trail.Apply(slot.Output, config.Screen.Trail);
+            outTex = slot.ComposeOver(outTex, args.Width, args.Height);
+            outTex = screenPass.Apply(outTex, args.Width, args.Height, config.Screen);
         }
-        // Бирки «поверх» — после шлейфа, до корпуса (как в RunInteractive)
-        outTex = slot.ComposeOver(outTex, args.Width, args.Height);
-        outTex = screenPass.Apply(outTex, args.Width, args.Height, config.Screen);
         gl.Finish();
         double ms = sw.Elapsed.TotalMilliseconds / Math.Max(1, args.Frames);
 

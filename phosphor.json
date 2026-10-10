@@ -19,7 +19,7 @@
                     { "id": "crt", "mod": { "brightness": { "src": "breath", "amount": 0.12 } } } ],
       "amber":    [ { "id": "mono", "contrast": 1.15 }, { "id": "phosphor", "color": "amber", "persistence": 0.86, "mod": { "persistence": { "src": "night", "amount": 0.08 } } },
                     { "id": "crt", "mod": { "brightness": { "src": "breath", "amount": 0.1 } } } ],
-      "kassette": [ { "id": "vhs", "mod": { "tracking": { "src": "fatigue", "amount": 0.6 } } },
+      "kassette": [ { "id": "vhs", "badTracking": 0.35, "lumaRes": 520, "chromaRes": 60, "mod": { "tracking": { "src": "fatigue", "amount": 0.6 } } },
                     { "id": "chroma", "amount": 1.5 },
                     { "id": "crt" } ],
       "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt" } ],

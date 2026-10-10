@@ -78,6 +78,7 @@ public sealed unsafe class ScreenPassTests
     {
         Trail = 0f, Curvature = 0f, CornerRadius = 0f, Vignette = 0f, Overscan = 0f,
         Glare = 0f, Bezel = "none", BezelColor = "black", BezelSize = 0.06f, BezelGlow = 0.5f,
+        Mask = 0f, Interlace = 0f,
     };
 
     [Fact]

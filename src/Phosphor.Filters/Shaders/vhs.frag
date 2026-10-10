@@ -4,6 +4,7 @@ in vec2 vUv;
 out vec4 fragColor;
 
 uniform sampler2D uInput;
+uniform sampler2D uChroma;   // размытая цветность (I в R, Q в G), из отдельных проходов; нужна при chromaRes < 400
 uniform vec2 uResolution;
 uniform float uTime;
 uniform int uFrame;
@@ -17,6 +18,12 @@ uniform float p_bottomSkew;
 uniform float p_wobble;
 uniform float p_saturation;
 uniform float p_dropouts;
+uniform float p_badTracking;
+uniform float p_bandSpeed;
+uniform float p_iqShift;
+uniform float p_chromaClip;
+uniform float p_lumaRes;
+uniform float p_chromaRes;
 
 const float TAU = 6.2831853;
 const float SKEW_ZONE = 0.025;    // шов головок: нижние 2.5% кадра (CRT прячет низ по углам)
@@ -67,6 +74,15 @@ vec3 chromaToRGB(vec2 iq) {
     return vec3(0.956 * iq.x + 0.621 * iq.y,
                -0.272 * iq.x - 0.647 * iq.y,
                -1.106 * iq.x + 1.703 * iq.y);
+}
+
+// Мягкая обрезка одной компоненты цветности: до 0.8·lim линейно, выше — гладко к lim.
+float clipComp(float v, float lim) {
+    float a = abs(v);
+    float knee = 0.8 * lim;
+    float x = max(a - knee, 0.0) / (lim - knee);
+    float soft = knee + (lim - knee) * x / (1.0 + x);
+    return sign(v) * mix(a, soft, smoothstep(knee, lim, a));
 }
 
 void main() {
@@ -147,7 +163,20 @@ void main() {
     float cm = rnd3(row >> 1u, cx, fr + 13u);
     float skew = p_bottomSkew * 45.0 * tb * (0.25 + 0.75 * cm);
 
-    float D = wob + jit + bandShift + skew;
+    // Плохой трекинг: катящаяся полоса, сверху вниз, 8 с на проход при bandSpeed = 1.
+    // yb — центр полосы (uv), a — расстояние строки до центра со знаком, в долях высоты (-0.5..0.5).
+    float bt = p_badTracking;
+    float yb = 1.0 - fract(tm * p_bandSpeed / 8.0);
+    float a = fract(vUv.y - yb + 0.5) - 0.5;
+    float da = abs(a);
+    float zf = clamp(1.0 - da / 0.12, 0.0, 1.0);          // 1 в центре полосы, 0 на краю зоны (0.12)
+    float bandAmp = mix(0.6, 1.0, rnd3(fr, 61u, 0u));    // дёрганье: амплитуда меняется каждый кадр
+    float bandRow = 0.7 + 0.3 * rnd3(row, fr, 62u);      // и по строкам
+    // Перекос: выше центра — сильный сдвиг вправо (до 60 px на 1920), ниже — слабый обратный хвост (до 10 px).
+    float bandRaw = a >= 0.0 ? 60.0 * pow(zf, 4.0) : -10.0 * pow(zf, 2.0);
+    float bandX = bt * (res.x / 1920.0) * bandAmp * bandRow * bandRaw;
+
+    float D = wob + jit + bandShift + skew + bandX;
     float xg = vUv.x - D / res.x;
 
     // 2. Выборка: Y резкая (1 тап с rgbShift), I/Q размыты влево от точки, цвет тянется вправо.
@@ -158,16 +187,56 @@ void main() {
     float sI = 0.0;
     float sQ = 0.0;
     float sW = 0.0;
-    for (int i = 0; i < BLEED_TAPS; i++) {
-        float t = float(i) / float(BLEED_TAPS - 1);
-        float w = 1.0 - 0.6 * t;
-        vec3 q = toYIQ(fetchRGB(xg - L * t, vy, rs));
-        sI += q.y * w;
-        sQ += q.z * w;
-        sW += w;
+    // Разъезд I/Q: I берётся из x + iqs, Q из x − iqs (iqShift px на 1080 по высоте). Y — из x.
+    float iqs = p_iqShift * (res.y / 1080.0) / res.x;
+    if (p_chromaRes < 399.5) {
+        // Полоса цветности (chromaRes): даунсэмпл и гаусс сделаны отдельными проходами, здесь — только выборка.
+        // Сдвиг вправо на bleed·10 px складывает bleed с размытой цветностью.
+        vec2 iqb = texture(uChroma, vec2(xg - 10.0 * p_bleed / res.x, vy)).rg;
+        sI = iqb.x;
+        sQ = iqb.y;
+        sW = 1.0;
+    } else {
+        for (int i = 0; i < BLEED_TAPS; i++) {
+            float t = float(i) / float(BLEED_TAPS - 1);
+            float w = 1.0 - 0.6 * t;
+            float xt = xg - L * t;
+            sI += toYIQ(fetchRGB(xt + iqs, vy, rs)).y * w;
+            sQ += toYIQ(fetchRGB(xt - iqs, vy, rs)).z * w;
+            sW += w;
+        }
     }
-    // Меняем только цветность: при bleed = 0 дельта равна 0, цвет остаётся исходным.
-    vec3 col = c0 + chromaToRGB(vec2(sI / sW - yiq0.y, sQ / sW - yiq0.z));
+    // Разрешение яркости (lumaRes): Y размыт по x, σ = 0.5·W/lumaRes. При 1920 — выключено (дельта 0).
+    float dY = 0.0;
+    if (p_lumaRes < 1919.5) {
+        float sL = 0.5 * res.x / p_lumaRes;
+        float yb = 0.0;
+        float yw = 0.0;
+        // 9 проб, шаг σ/2, охват ±2σ: веса exp(-i²/8)
+        for (int i = -4; i <= 4; i++) {
+            float w = exp(-float(i * i) / 8.0);
+            yb += dot(fetchRGB(xg + float(i) * sL * 0.5 / res.x, vy, rs), vec3(0.299, 0.587, 0.114)) * w;
+            yw += w;
+        }
+        dY = yb / yw - yiq0.x;
+    }
+    // Меняем цветность дельтой: при bleed = 0, iqShift = 0 и chromaRes = 400 она равна 0, цвет исходный.
+    vec3 col = c0 + vec3(dY) + chromaToRGB(vec2(sI / sW - yiq0.y, sQ / sW - yiq0.z));
+
+    // Обрезка цветности: |I|,|Q| ограничиваются порогом lim (0 — без обрезки). Меняем дельту, как выше.
+    if (p_chromaClip > 0.0) {
+        float lim = mix(0.6, 0.15, p_chromaClip);
+        vec3 yc = toYIQ(col);
+        col += chromaToRGB(vec2(clipComp(yc.y, lim), clipComp(yc.z, lim)) - yc.yz);
+    }
+    // Плохой трекинг: цветность в зоне полосы смешивается с шумом (шум строки + немного пиксельного).
+    float kc = bt * zf * zf;
+    if (kc > 0.0) {
+        vec2 nIQ = 0.5 * vec2(rnd3(row, fr, 91u) - 0.5 + 0.3 * (rnd3(xi, row, fr + 92u) - 0.5),
+                              rnd3(row, fr, 93u) - 0.5 + 0.3 * (rnd3(xi, row, fr + 94u) - 0.5));
+        vec3 yc = toYIQ(col);
+        col += chromaToRGB(kc * (nIQ - yc.yz));
+    }
 
     // 3. Цвет: насыщенность (1 = без изменений).
     float lum = dot(col, vec3(0.299, 0.587, 0.114));
@@ -204,6 +273,23 @@ void main() {
         }
     }
     col += streak * bk;
+
+    // Плохой трекинг: шум яркости в зоне полосы и белые чёрточки в самой полосе (|a| < 0.01), ячейки 200 px.
+    col += bt * zf * 0.1 * rnd3(xi, row, fr + 95u);
+    if (bt > 0.0 && da < 0.01) {
+        int ci2 = int(floor(px.x / 200.0));
+        for (int k = 0; k < 2; k++) {
+            int cc = ci2 - k;
+            if (cc < 0) continue;
+            uint cu = uint(cc);
+            if (rnd3(row, cu, fr + 81u) < bt * 0.25) {
+                float len2 = 10.0 + 50.0 * rnd3(row, cu, fr + 82u);
+                float x2 = float(cu) * 200.0 + rnd3(row, cu, fr + 83u) * 200.0;
+                float onSpeck = smoothstep(x2 - 1.0, x2 + 0.5, px.x) * (1.0 - smoothstep(x2 + len2 - 1.0, x2 + len2 + 1.0, px.x));
+                col = mix(col, vec3(0.95), onSpeck);
+            }
+        }
+    }
 
     // 4. Шум, выпадения.
     float g = rnd3(xi, row, fr + 1000u);                          // зерно, каждый кадр, в основном осветляет
