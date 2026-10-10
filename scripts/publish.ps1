@@ -21,8 +21,13 @@ Write-Host "Project : $proj"
 Write-Host "Output  : $outDir"
 Write-Host "SelfContained: $selfVal"
 
-# Clean output so no stale files stay in dist
-if (Test-Path -LiteralPath $outDir) { Remove-Item -LiteralPath $outDir -Recurse -Force }
+# Clean output so no stale files stay in dist. Clear the CONTENTS, not the folder itself:
+# the folder may be held open by Explorer or a sync tool, and then deleting it fails.
+if (Test-Path -LiteralPath $outDir) {
+    Get-ChildItem -LiteralPath $outDir -Force | Remove-Item -Recurse -Force
+} else {
+    New-Item -ItemType Directory -Path $outDir | Out-Null
+}
 if (Test-Path -LiteralPath $shotPng) { Remove-Item -LiteralPath $shotPng -Force }
 
 # Version info of the exe: commit hash (+ -dirty when the tree has uncommitted changes). No git: build without it, do not fail.

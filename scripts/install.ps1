@@ -1,15 +1,18 @@
 # install.ps1 - install PHOSPHOR as the current user's screensaver (no admin rights needed).
-# Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-TimeoutMinutes N] [-WhatIf]
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-TimeoutMinutes N] [-Source <folder>] [-WhatIf]
+#   -Source: folder with Phosphor.exe / Phosphor.scr / phosphor.json to install from.
+#            Default: dist\Phosphor of this repo (after scripts\publish.ps1).
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [ValidateRange(0, 1440)]
-    [int]$TimeoutMinutes = 0
+    [int]$TimeoutMinutes = 0,
+    [string]$Source = ''
 )
 
 $ErrorActionPreference = 'Stop'
 
 $root     = Split-Path -Parent $PSScriptRoot
-$srcDir   = Join-Path $root 'dist\Phosphor'
+$srcDir   = if ($Source) { $Source } else { Join-Path $root 'dist\Phosphor' }
 $dstDir   = Join-Path $env:LOCALAPPDATA 'Programs\Phosphor'
 $scrSrc   = Join-Path $srcDir 'Phosphor.scr'
 $scrDst   = Join-Path $dstDir 'Phosphor.scr'
@@ -18,8 +21,11 @@ $prevFile = Join-Path $dstDir 'previous-settings.json'
 $desk     = 'HKCU:\Control Panel\Desktop'
 $names    = @('SCRNSAVE.EXE', 'ScreenSaveActive', 'ScreenSaveTimeOut')
 
-if (-not (Test-Path -LiteralPath $scrSrc)) {
-    throw "Not found: $scrSrc. Run scripts\publish.ps1 first."
+# A source folder may hold only Phosphor.exe (package): then Phosphor.scr is made from it as a copy.
+$exeSrc     = Join-Path $srcDir 'Phosphor.exe'
+$scrFromExe = -not (Test-Path -LiteralPath $scrSrc)
+if ($scrFromExe -and -not (Test-Path -LiteralPath $exeSrc)) {
+    throw "Not found: $scrSrc or $exeSrc. Run scripts\publish.ps1 first."
 }
 
 if ($WhatIfPreference) { Write-Host "[WhatIf] dry run: nothing will be copied or written" }
@@ -30,7 +36,8 @@ if ($PSCmdlet.ShouldProcess($dstDir, 'Create folder')) {
     New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
 }
 
-Get-ChildItem -LiteralPath $srcDir -File | ForEach-Object {
+# Only program/config files: -Source may be a package folder that also holds scripts, .bat and .txt
+Get-ChildItem -LiteralPath $srcDir -File | Where-Object { $_.Extension -in '.exe', '.scr', '.dll', '.json' } | ForEach-Object {
     if ($_.Name -eq 'phosphor.json') {
         if (Test-Path -LiteralPath $cfgDst) {
             $defDst = Join-Path $dstDir 'phosphor.default.json'
@@ -46,6 +53,11 @@ Get-ChildItem -LiteralPath $srcDir -File | ForEach-Object {
         if ($PSCmdlet.ShouldProcess((Join-Path $dstDir $_.Name), 'Copy file')) {
             Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $dstDir $_.Name) -Force
         }
+    }
+}
+if ($scrFromExe) {
+    if ($PSCmdlet.ShouldProcess($scrDst, 'Copy Phosphor.exe as Phosphor.scr (no .scr in source)')) {
+        Copy-Item -LiteralPath $exeSrc -Destination $scrDst -Force
     }
 }
 
