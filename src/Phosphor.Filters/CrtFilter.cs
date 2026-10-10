@@ -13,16 +13,16 @@ public sealed class CrtFilter : ShaderFilter
 {
     private static readonly IReadOnlyList<ParamSpec> _params = new ParamSpec[]
     {
-        new ParamSpec("curvature", 0.08f, 0f, 0.5f, null, "Бочкообразная кривизна экрана"),
-        new ParamSpec("scanlines", 0.5f, 0f, 1f, null, "Сила тёмных скан-линий"),
-        new ParamSpec("scanlinePeriod", 3f, 1f, 8f, null, "Период скан-линий в пикселях выхода"),
-        new ParamSpec("mask", 0.3f, 0f, 1f, null, "Сила апертурной решётки (RGB-триады по 3 пикселя)"),
-        new ParamSpec("vignette", 0.35f, 0f, 1f, null, "Затемнение к краям"),
-        new ParamSpec("bloom", 0.8f, 0f, 3f, null, "Сила свечения вокруг ярких участков"),
-        new ParamSpec("bloomRadius", 6f, 0.5f, 16f, null, "Радиус свечения в пикселях входа"),
-        new ParamSpec("flicker", 0.03f, 0f, 0.3f, null, "Амплитуда мерцания яркости"),
-        new ParamSpec("brightness", 1.1f, 0f, 3f, null, "Общий множитель яркости"),
-        new ParamSpec("cornerRadius", 0.03f, 0f, 0.2f, null, "Скругление углов экрана (доля от высоты)"),
+        new ParamSpec("curvature", 0.08f, 0f, 0.5f, null, "Бочкообразная кривизна экрана", "кривизна"),
+        new ParamSpec("scanlines", 0.5f, 0f, 1f, null, "Сила тёмных скан-линий", "строки развёртки"),
+        new ParamSpec("scanlinePeriod", 3f, 1f, 8f, null, "Период скан-линий в пикселях выхода", "период строк"),
+        new ParamSpec("mask", 0.3f, 0f, 1f, null, "Сила апертурной решётки (RGB-триады по 3 пикселя)", "маска кинескопа"),
+        new ParamSpec("vignette", 0.35f, 0f, 1f, null, "Затемнение к краям", "затемнение краёв"),
+        new ParamSpec("bloom", 0.8f, 0f, 3f, null, "Сила свечения вокруг ярких участков", "свечение"),
+        new ParamSpec("bloomRadius", 6f, 0.5f, 16f, null, "Радиус свечения в пикселях входа", "радиус свечения"),
+        new ParamSpec("flicker", 0.03f, 0f, 0.3f, null, "Амплитуда мерцания яркости", "мерцание"),
+        new ParamSpec("brightness", 1.1f, 0f, 3f, null, "Общий множитель яркости", "яркость"),
+        new ParamSpec("cornerRadius", 0.03f, 0f, 0.2f, null, "Скругление углов экрана (доля от высоты)", "скругление углов"),
     };
 
     private const string BrightResource = "Phosphor.Filters.Shaders.crt_bright.frag";

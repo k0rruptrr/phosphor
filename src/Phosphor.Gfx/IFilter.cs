@@ -7,8 +7,9 @@ namespace Phosphor.Gfx;
 /// Описание числового параметра фильтра. ВСЕ параметры фильтров — float.
 /// Перечисления (например цвет фосфора) задаются через Options: в конфиге строка, в шейдер идёт индекс (0, 1, 2...).
 /// Булевы — Min=0, Max=1, в конфиге true/false.
+/// Label — короткая подпись для окна настроек (1–3 слова); Description — полное пояснение (в подсказке).
 /// </summary>
-public sealed record ParamSpec(string Name, float Default, float Min, float Max, string[]? Options = null, string Description = "");
+public sealed record ParamSpec(string Name, float Default, float Min, float Max, string[]? Options = null, string Description = "", string? Label = null);
 
 /// <summary>Значения параметров на текущий кадр: уже с модуляцией от звука и зажатые в [Min, Max].</summary>
 public sealed class FilterParams

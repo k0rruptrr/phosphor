@@ -14,14 +14,14 @@ public sealed class TvFilter : ShaderFilter
 {
     private static readonly IReadOnlyList<ParamSpec> _params = new ParamSpec[]
     {
-        new ParamSpec("mode", 0f, 0f, 2f, new[] { "pal", "secam", "ntsc" }, "Система цветности"),
-        new ParamSpec("amount", 1f, 0f, 1f, null, "Общая сила артефактов, 0 = почти без изменений"),
-        new ParamSpec("hue", 0f, -30f, 30f, null, "Оттенок в градусах (ручка Tint для NTSC)"),
-        new ParamSpec("sharpness", 0.3f, 0f, 1f, null, "Звон и перерегулирование яркости на краях"),
-        new ParamSpec("saturation", 0.6f, 0f, 1.5f, null, "SECAM: насыщенность декодированного цвета (пастель)"),
-        new ParamSpec("fires", 0.5f, 0f, 1f, null, "SECAM: количество факелов (красно-розовых и бирюзовых штрихов)"),
-        new ParamSpec("signal", 1f, 0f, 1f, null, "SECAM: качество приёма, 1 = идеально, ниже = снег и факелы от шума"),
-        new ParamSpec("edge", 0.35f, 0f, 1f, null, "Сигналы опознавания (бутылки) сверху кадра"),
+        new ParamSpec("mode", 0f, 0f, 2f, new[] { "pal", "secam", "ntsc" }, "Система цветности", "система цвета"),
+        new ParamSpec("amount", 1f, 0f, 1f, null, "Общая сила артефактов, 0 = почти без изменений", "сила эффекта"),
+        new ParamSpec("hue", 0f, -30f, 30f, null, "Оттенок в градусах (ручка Tint для NTSC)", "оттенок"),
+        new ParamSpec("sharpness", 0.3f, 0f, 1f, null, "Звон и перерегулирование яркости на краях", "резкость"),
+        new ParamSpec("saturation", 0.6f, 0f, 1.5f, null, "SECAM: насыщенность декодированного цвета (пастель)", "насыщенность"),
+        new ParamSpec("fires", 0.5f, 0f, 1f, null, "SECAM: количество факелов (красно-розовых и бирюзовых штрихов)", "факелы"),
+        new ParamSpec("signal", 1f, 0f, 1f, null, "SECAM: качество приёма, 1 = идеально, ниже = снег и факелы от шума", "качество приёма"),
+        new ParamSpec("edge", 0.35f, 0f, 1f, null, "Сигналы опознавания (бутылки) сверху кадра", "опознавание"),
     };
 
     private const string EncodeResource = "Phosphor.Filters.Shaders.tv_encode.frag";

@@ -12,10 +12,10 @@ public sealed class PhosphorFilter : ShaderFilter
 {
     private static readonly IReadOnlyList<ParamSpec> _params = new ParamSpec[]
     {
-        new ParamSpec("color", 0f, 0f, 2f, new[] { "green", "amber", "white" }, "Тип люминофора"),
-        new ParamSpec("persistence", 0.82f, 0f, 0.98f, null, "Послесвечение: доля яркости прошлого кадра через 1/60 с"),
-        new ParamSpec("tint", 1f, 0f, 1f, null, "1 = полностью монохромно, 0 = исходные цвета"),
-        new ParamSpec("brightness", 1f, 0f, 3f, null, "Общий множитель яркости"),
+        new ParamSpec("color", 0f, 0f, 2f, new[] { "green", "amber", "white" }, "Тип люминофора", "тип люминофора"),
+        new ParamSpec("persistence", 0.82f, 0f, 0.98f, null, "Послесвечение: доля яркости прошлого кадра через 1/60 с", "послесвечение"),
+        new ParamSpec("tint", 1f, 0f, 1f, null, "1 = полностью монохромно, 0 = исходные цвета", "оттенок"),
+        new ParamSpec("brightness", 1f, 0f, 3f, null, "Общий множитель яркости", "яркость"),
     };
 
     private RenderTarget? _history;

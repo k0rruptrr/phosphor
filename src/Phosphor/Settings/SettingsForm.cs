@@ -623,7 +623,7 @@ internal sealed class SettingsForm : Form
             return;
         }
         var stages = _model.PresetStages(name);
-        _labelCol = LabelColumn(stages.SelectMany(st => st.Params).Select(p => LabelText(p.Name, p.Description)));
+        _labelCol = LabelColumn(stages.SelectMany(st => st.Params).Select(FilterLabel));
         foreach (var st in stages)
         {
             _params.AddRow(HeaderRow($"{st.Id}  ·  {StageHumanName(st.Id)}"));
@@ -638,6 +638,10 @@ internal sealed class SettingsForm : Form
 
     /// <summary>Подпись параметра для пользователя: Description из спецификации, без него — техническое имя.</summary>
     private static string LabelText(string name, string description) => description.Trim().Length > 0 ? description.Trim() : name;
+
+    /// <summary>Подпись параметра фильтра: короткий Label, без него — как у сцен (Description, иначе имя).</summary>
+    private static string FilterLabel(ParamSpec spec) =>
+        !string.IsNullOrWhiteSpace(spec.Label) ? spec.Label.Trim() : LabelText(spec.Name, spec.Description);
 
     /// <summary>
     /// Ширина колонки подписей: по самой длинной подписи, но не больше 55% панели (ползунок остаётся).
@@ -706,13 +710,13 @@ internal sealed class SettingsForm : Form
 
     /// <summary>Строка параметра: подпись, контрол, значение, «↺» (по умолчанию). Контрол и значение задаёт вызывающий.</summary>
     /// <summary>
-    /// Строка: подпись (Description, обрезается с «…»; в подсказке — полный текст и техническое имя), место под контрол
+    /// Строка: подпись text (обрезается с «…»; в подсказке — полное description и техническое имя), место под контрол
     /// (слева от значения, x = _labelCol), значение и кнопка «по умолчанию» справа.
     /// </summary>
-    private (Panel Row, Label Value, ResetButton Reset) ParamRow(string name, string description)
+    private (Panel Row, Label Value, ResetButton Reset) ParamRow(string name, string text, string description)
     {
         var row = NewRow();
-        string text = LabelText(name, description);
+        string full = description.Trim();
         var label = new Label
         {
             Text = Ellipsize(text, _labelCol - 12),
@@ -721,7 +725,7 @@ internal sealed class SettingsForm : Form
             Location = new Point(0, 4),
             TextAlign = ContentAlignment.MiddleLeft,
         };
-        _tip.SetToolTip(label, text == name ? name : $"{text}\n({name})");
+        _tip.SetToolTip(label, full.Length > 0 ? $"{full}\n({name})" : name);
         var value = new Label { AutoSize = false, Size = new Size(ValueW, 20), Location = new Point(ValueX, 4), TextAlign = ContentAlignment.MiddleRight };
         var reset = new ResetButton { Size = new Size(28, 22), Location = new Point(ResetX, 3) };
         row.Controls.Add(label);
@@ -743,7 +747,7 @@ internal sealed class SettingsForm : Form
 
     private Panel SceneParamRow(string sceneId, SceneParamSpec spec)
     {
-        var (row, value, reset) = ParamRow(spec.Name, spec.Description);
+        var (row, value, reset) = ParamRow(spec.Name, LabelText(spec.Name, spec.Description), spec.Description);
         double v = _model.SceneParamValue(sceneId, spec);
         string def;
         Control control;
@@ -813,7 +817,7 @@ internal sealed class SettingsForm : Form
 
     private Panel FilterParamRow(string preset, int stage, ParamSpec spec)
     {
-        var (row, value, reset) = ParamRow(spec.Name, spec.Description);
+        var (row, value, reset) = ParamRow(spec.Name, FilterLabel(spec), spec.Description);
         double v = _model.PresetParamValue(preset, stage, spec);
         Control control;
         string def;
