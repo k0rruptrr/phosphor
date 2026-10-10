@@ -74,7 +74,13 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 | `scenes.speed` | `1.0` | Общая скорость сцен, 0.05..10 |
 | `scenes.palette` | `"default"` | Палитра: `default`, `amber`, `mono`, `rainbow` |
 | `scenes.params` | `{"matrix":{"density":0.6}}` | Параметры сцен по id. Имена параметров — в исходниках сцены |
-| `filters.active` | `"terminal"` | Имя активного пресета |
+| `scenes.favorites` | `[]` | Любимые сцены: выпадают чаще (вес `shuffle.favoriteWeight`). Учитываются, только если сцена включена |
+| `scenes.favoritesOnly` | `false` | Только любимые сцены (если среди включённых любимых нет — все включённые) |
+| `scenes.seen` | задаётся программой | Сцены, которые конфиг уже «знает». Новая сцена из обновления включается сама и дописывается сюда. Удалить ключ — все сцены станут «новыми» при следующем запуске |
+| `filters.active` | `"terminal"` | Имя активного пресета. `"shuffle"` — стартовый пресет случайный (взвешенно), это не ошибка |
+| `filters.enabled` | все пресеты | Пресеты, участвующие в переборе. Не из списка — не выбираются |
+| `filters.favorites` | `[]` | Любимые пресеты: выпадают чаще (вес `shuffle.favoriteWeight`) |
+| `filters.favoritesOnly` | `false` | Только любимые пресеты (если среди доступных любимых нет — все доступные) |
 | `filters.presets` | см. ниже | Пресеты: имя → массив стадий фильтров. Стадия: `{"id": "...", <параметры>, "mod": {...}}` |
 | `filters.presets.*.mod` | — | Модуляция параметра стадии сигналом: `{"параметр": {"src": "...", "amount": N}}`. Источники: звук — `level`, `bass`, `mid`, `high`, `beat`, `beatPulse`; состояние — `breath`, `night`, `fatigue`, `transition` |
 | `shuffle.scenes` | `true` | Менять сцены по таймеру |
@@ -85,6 +91,7 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 | `shuffle.perMonitor` | `true` | Разная сцена на каждом мониторе |
 | `shuffle.presetOnDrop` | `true` | Новый пресет при смене сцены |
 | `shuffle.randomFilterChains` | `false` | Случайные цепочки фильтров вместо пресетов (не рекомендуется) |
+| `shuffle.favoriteWeight` | `3` | Во сколько раз любимые сцены/пресеты выпадают чаще обычных, 1..10 |
 | `audio.enabled` | `true` | Захват звука для реакции сцен |
 | `audio.sensitivity` | `1.0` | Чувствительность к звуку |
 | `audio.maxPulse` | `0.8` | Потолок вспышки `beatPulse` |
@@ -128,6 +135,7 @@ powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 -KeepConfig
 ## Логи
 
 - `%TEMP%\phosphor.log` — лог последнего запуска. Если файл занят другим процессом, пишется `%TEMP%\phosphor-<pid>.log`.
+- Первая строка лога — версия сборки: `PHOSPHOR 0.7.0 (<коммит>, <дата сборки>) <режим> argv=[...]`. Коммит с `-dirty` — в сборке были незакоммиченные изменения; `dev` — сборка без git.
 - Читать: `Get-Content "$env:TEMP\phosphor.log" -Encoding utf8 -Tail 50`.
 - Окно с сообщением об ошибке показывается в режимах `/w` и `--shot`.
 

@@ -24,7 +24,7 @@ internal static class Program
             MessageBoxW(0, e.Message, "PHOSPHOR", 0x10);
             return 2;
         }
-        log.Info($"PHOSPHOR {args.Mode} argv=[{string.Join(' ', argv)}]");
+        log.Info($"PHOSPHOR {AppInfo.Display} {args.Mode} argv=[{string.Join(' ', argv)}]");
 
         try
         {
@@ -33,6 +33,18 @@ internal static class Program
             var cfgPath = Path.Combine(AppContext.BaseDirectory, "phosphor.json");
             var config = PhosphorConfig.Load(cfgPath, warnings);
             foreach (var w in warnings) log.Warn(w);
+
+            // Старый конфиг: новые сцены из обновления включаются сами и запоминаются (не для --shot и превью)
+            if (args.Mode is LaunchMode.Screensaver or LaunchMode.Windowed or LaunchMode.Configure)
+            {
+                var notes = new List<string>();
+                if (config.MigrateScenes(Catalog.Scenes().Ids, notes))
+                {
+                    foreach (var n in notes) log.Info("конфиг: " + n);
+                    try { config.Save(cfgPath); log.Info("конфиг: сохранён " + cfgPath); }
+                    catch (Exception e) { log.Warn($"конфиг: не удалось сохранить ({e.Message}), работаю с мигрированным в памяти"); }
+                }
+            }
 
             return args.Mode switch
             {
@@ -161,18 +173,30 @@ internal static class Program
 
     private static List<MonitorSlot> BuildSlots(ScreensaverWindow win, LaunchArgs args, Shared s, int cellH)
     {
-        var enabled = s.Config.Scenes.Enabled.Where(id =>
-        {
-            if (s.Scenes.Has(id)) return true;
-            s.Log.Warn($"Сцена '{id}' в конфиге, но не реализована — пропускаю");
-            return false;
-        }).ToList();
-        if (enabled.Count == 0) enabled.Add(s.Scenes.Ids.First());
+        foreach (var id in s.Config.Scenes.Enabled)
+            if (!s.Scenes.Has(id)) s.Log.Warn($"Сцена '{id}' в конфиге, но не реализована — пропускаю");
 
-        string PickScene(int i) => args.Scene ?? (s.Config.Shuffle.PerMonitor
-            ? enabled[(s.Rng.Next(enabled.Count) + i) % enabled.Count]
-            : enabled[0]);
-        string preset = args.Preset ?? s.Config.Filters.Active;
+        // Стартовые сцены: веса из Selection; на разных мониторах — разные сцены, если хватает
+        var scenePool = Selection.ScenePool(s.Config, s.Scenes.Ids);
+        var chosen = new List<string>();
+        string PickScene(int i)
+        {
+            if (args.Scene is not null) return args.Scene;
+            var exclude = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            double r = 0;
+            if (s.Config.Shuffle.PerMonitor)
+            {
+                foreach (var c in chosen) exclude.Add(c);
+                r = s.Rng.NextDouble();
+            }
+            var id = Selection.Pick(scenePool, r, exclude);
+            chosen.Add(id);
+            return id;
+        }
+        // Стартовый пресет: "shuffle" — случайный из доступных (взвешенно), иначе — указанный
+        string preset = args.Preset ?? (string.Equals(s.Config.Filters.Active, FiltersConfig.ShuffleActive, StringComparison.OrdinalIgnoreCase)
+            ? Selection.Pick(Selection.PresetPool(s.Config), s.Rng.NextDouble())
+            : s.Config.Filters.Active);
         // Стартовый оверлей — по тем же правилам, что и дирижёр (env PHOSPHOR_OVERLAY — принудительно)
         string? PickOverlay(string sceneId) =>
             Environment.GetEnvironmentVariable("PHOSPHOR_OVERLAY") is { Length: > 0 } ov ? ov

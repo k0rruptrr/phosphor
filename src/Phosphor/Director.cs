@@ -16,7 +16,6 @@ internal sealed class Director
 
     private readonly Shared _s;
     private readonly List<MonitorSlot> _slots;
-    private readonly List<string> _scenes;
     private readonly List<string> _presets;
     private readonly bool _lockScene, _lockPreset;
     private readonly string? _forcedOverlay;
@@ -37,8 +36,6 @@ internal sealed class Director
         _slots = slots;
         _lockScene = lockScene;
         _lockPreset = lockPreset;
-        _scenes = s.Config.Scenes.Enabled.Where(s.Scenes.Has).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (_scenes.Count == 0) _scenes.AddRange(s.Scenes.Ids);
         _presets = s.Config.Filters.Presets.Keys.ToList();
         _forcedOverlay = Environment.GetEnvironmentVariable("PHOSPHOR_OVERLAY") is { Length: > 0 } ov ? ov : null;
         _nextSwitch = new float[slots.Count];
@@ -192,20 +189,24 @@ internal sealed class Director
 
     private string PickScene(int i)
     {
-        // Не повторять текущую и не дублировать то, что сейчас на других мониторах
+        // Веса: любимые чаще (Selection.ScenePool). Не повторять текущую и не дублировать то, что сейчас на других мониторах
+        var pool = Selection.ScenePool(_s.Config, _s.Scenes.Ids);
         var busy = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var sl in _slots) { busy.Add(sl.Current.Scene.Id); if (sl.Incoming is not null) busy.Add(sl.Incoming.Scene.Id); }
-        var options = _scenes.Where(s => !busy.Contains(s)).ToList();
-        if (options.Count == 0) options = _scenes.Where(s => !s.Equals(_slots[i].Current.Scene.Id, StringComparison.OrdinalIgnoreCase)).ToList();
-        if (options.Count == 0) options = _scenes;
-        return options[_s.Rng.Next(options.Count)];
+        var exclude = busy;
+        if (!pool.Any(p => !busy.Contains(p.Id)))
+            exclude = new HashSet<string>(new[] { _slots[i].Current.Scene.Id }, StringComparer.OrdinalIgnoreCase);
+        return Selection.Pick(pool, _s.Rng.NextDouble(), exclude);
     }
 
-    /// <summary>Пресет по настроению: ночью — фосфорные терминалы, под музыку — rave; без музыки rave редкий.</summary>
+    /// <summary>Пресет по настроению: ночью — фосфорные терминалы, под музыку — rave; без музыки rave редкий.
+    /// Веса настроения умножаются на вес из Selection.PresetPool; пресеты вне пула не выбираются.</summary>
     private string PickPreset(string current, DateTime now, in AudioFrame audio)
     {
         if (_presets.Count <= 1) return current;
         float night = NightFactor(now);
+        var poolWeight = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, weight) in Selection.PresetPool(_s.Config)) poolWeight[id] = weight;
         double total = 0;
         var w = new double[_presets.Count];
         for (int k = 0; k < _presets.Count; k++)
@@ -215,6 +216,7 @@ internal sealed class Director
             if (p.Equals(current, StringComparison.OrdinalIgnoreCase)) weight = 0;
             else if (p.Equals("rave", StringComparison.OrdinalIgnoreCase)) weight = audio.Active ? 4 : 0.15;
             else if (p is "terminal" or "amber") weight = 1 + 2 * night;
+            weight *= poolWeight.TryGetValue(p, out var pw) ? pw : 0;
             w[k] = weight;
             total += weight;
         }

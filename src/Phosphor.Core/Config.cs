@@ -55,7 +55,9 @@ public sealed class PhosphorConfig
         if (CellHeightPx is < 8 or > 64) { warnings.Add($"cellHeightPx={CellHeightPx} вне 8..64, ставлю 18"); CellHeightPx = 18; }
         if (Scenes.Enabled.Count == 0) { warnings.Add("Нет включённых сцен, включаю matrix"); Scenes.Enabled.Add("matrix"); }
         if (Filters.Presets.Count == 0) Filters.Presets["clean"] = JsonDocument.Parse("[]").RootElement;
-        if (!Filters.Presets.ContainsKey(Filters.Active))
+        // "shuffle" — не ошибка: стартовый пресет выбирается случайно (см. Selection.PresetPool)
+        if (!string.Equals(Filters.Active, FiltersConfig.ShuffleActive, StringComparison.OrdinalIgnoreCase)
+            && !Filters.Presets.ContainsKey(Filters.Active))
         {
             var first = Filters.Presets.Keys.First();
             warnings.Add($"Пресет '{Filters.Active}' не найден, беру '{first}'");
@@ -63,7 +65,58 @@ public sealed class PhosphorConfig
         }
         Shuffle.IntervalSec = Math.Max(5, Shuffle.IntervalSec);
         Shuffle.TransitionSec = Math.Clamp(Shuffle.TransitionSec, 0, 10);
+        Shuffle.FavoriteWeight = Math.Clamp(Shuffle.FavoriteWeight, 1f, 10f);
         Scenes.Speed = Math.Clamp(Scenes.Speed, 0.05f, 10f);
+    }
+
+    /// <summary>
+    /// Сцены из каталога, которых нет в Scenes.Seen, — новые: включить и запомнить. Seen==null — виденными
+    /// считаются Enabled. Возвращает true, если конфиг изменился (его стоит сохранить). notes — что сделано, для лога.
+    /// </summary>
+    public bool MigrateScenes(IEnumerable<string> catalogIds, List<string> notes)
+    {
+        var seenBefore = Scenes.Seen;
+        var seen = new HashSet<string>(seenBefore ?? Scenes.Enabled, StringComparer.OrdinalIgnoreCase);
+        var enabled = new HashSet<string>(Scenes.Enabled, StringComparer.OrdinalIgnoreCase);
+        var result = Scenes.Seen is null ? new List<string>(Scenes.Enabled) : Scenes.Seen;
+        bool changed = seenBefore is null;
+
+        foreach (var id in catalogIds)
+        {
+            if (!seen.Add(id)) continue;
+            // Новая сцена из обновления: включаем (если ещё не включена) и запоминаем
+            result.Add(id);
+            if (enabled.Add(id)) Scenes.Enabled.Add(id);
+            notes.Add($"новая сцена '{id}' — включена");
+            changed = true;
+        }
+        Scenes.Seen = result;
+        return changed;
+    }
+
+    /// <summary>Записать конфиг в файл (camelCase, с отступами). Перед первой перезаписью файла без Seen — копия в <path>.bak.</summary>
+    public void Save(string path)
+    {
+        if (File.Exists(path) && !File.Exists(path + ".bak") && !HasSeenKey(File.ReadAllText(path)))
+            File.Copy(path, path + ".bak");
+        File.WriteAllText(path, JsonSerializer.Serialize(this, Json), new System.Text.UTF8Encoding(false));
+    }
+
+    private static bool HasSeenKey(string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
+            foreach (var p in doc.RootElement.EnumerateObject())
+            {
+                if (!string.Equals(p.Name, "scenes", StringComparison.OrdinalIgnoreCase) || p.Value.ValueKind != JsonValueKind.Object) continue;
+                foreach (var q in p.Value.EnumerateObject())
+                    if (string.Equals(q.Name, "seen", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+        catch (JsonException) { return false; }
     }
 
     /// <summary>Параметры сцены id (объект из scenes.params) или пустой объект.</summary>

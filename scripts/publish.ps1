@@ -25,9 +25,29 @@ Write-Host "SelfContained: $selfVal"
 if (Test-Path -LiteralPath $outDir) { Remove-Item -LiteralPath $outDir -Recurse -Force }
 if (Test-Path -LiteralPath $shotPng) { Remove-Item -LiteralPath $shotPng -Force }
 
+# Version info of the exe: commit hash (+ -dirty when the tree has uncommitted changes). No git: build without it, do not fail.
+$revArg = @()
+try {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $rev = (& git -C $root rev-parse --short HEAD 2>$null)
+    $revExit = $LASTEXITCODE
+    $status = (& git -C $root status --porcelain 2>$null)
+    $ErrorActionPreference = $prevEap
+    if ($revExit -eq 0 -and $rev) {
+        $rev = ("$rev").Trim()
+        if (-not [string]::IsNullOrWhiteSpace(($status | Out-String))) { $rev += '-dirty' }
+        $revArg = @("-p:SourceRevisionId=$rev")
+        Write-Host "Revision: $rev"
+    }
+} catch {
+    $ErrorActionPreference = 'Stop'
+    $revArg = @()
+}
+
 & dotnet publish $proj -c Release -r win-x64 --self-contained $selfVal `
     -p:AgentId=publish -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none `
-    -o $outDir
+    @revArg -o $outDir
 if ($LASTEXITCODE -ne 0) { Write-Host "dotnet publish failed (exit $LASTEXITCODE)"; exit 1 }
 
 # phosphor.json must sit next to the exe (Config is read from AppContext.BaseDirectory)

@@ -46,6 +46,33 @@ public static class Monitors
         return result;
     }
 
+    /// <summary>HMONITOR и имя устройства (как MonitorRect.Name) — для DDC/CI. Порядок не сортируется.</summary>
+    internal static IReadOnlyList<(nint HMonitor, string Name)> EnumerateHandles()
+    {
+        var handles = new List<nint>();
+        MonitorEnumProc proc = (hMonitor, hdc, lprc, data) =>
+        {
+            handles.Add(hMonitor);
+            return true;
+        };
+        Win32.EnumDisplayMonitors(0, 0, proc, 0);
+        GC.KeepAlive(proc);
+
+        var result = new List<(nint HMonitor, string Name)>(handles.Count);
+        foreach (nint h in handles)
+        {
+            var info = new MONITORINFOEXW
+            {
+                cbSize = (uint)Marshal.SizeOf<MONITORINFOEXW>(),
+                szDevice = string.Empty,
+            };
+            if (!Win32.GetMonitorInfoW(h, ref info))
+                continue;
+            result.Add((h, (info.szDevice ?? string.Empty).TrimEnd('\0')));
+        }
+        return result;
+    }
+
     /// <summary>Прямоугольник, покрывающий все мониторы (виртуальный экран).</summary>
     public static MonitorRect VirtualScreen()
     {

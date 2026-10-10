@@ -10,7 +10,15 @@
     <!-- Обычная сборка (без AgentId, например dotnet publish) кладёт obj/bin внутрь проекта; сборки с AgentId
          не должны затягивать оттуда сгенерированные AssemblyInfo.cs как исходники. -->
     <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
+    <Version>0.7.0</Version>
   </PropertyGroup>
+  <!-- Дата сборки — для строки версии в логе (AppInfo.BuildDate) -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>BuildDate</_Parameter1>
+      <_Parameter2>$([System.DateTime]::Now.ToString('yyyy-MM-dd HH:mm'))</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
   <!-- Параллельные агенты: dotnet build -p:AgentId=X собирает в свои bin/obj и не мешает остальным -->
   <PropertyGroup Condition="'$(AgentId)' != ''">
     <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory).build\$(AgentId)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>

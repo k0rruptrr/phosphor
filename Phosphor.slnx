@@ -13,6 +13,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Phosphor.Audio.Tests/Phosphor.Audio.Tests.csproj" />
+    <Project Path="tests/Phosphor.Core.Tests/Phosphor.Core.Tests.csproj" />
     <Project Path="tests/Phosphor.Data.Tests/Phosphor.Data.Tests.csproj" />
     <Project Path="tests/Phosphor.Filters.Tests/Phosphor.Filters.Tests.csproj" />
     <Project Path="tests/Phosphor.Overlays.Tests/Phosphor.Overlays.Tests.csproj" />
