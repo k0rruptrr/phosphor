@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Phosphor.Core;
 
@@ -41,8 +42,9 @@ public sealed class SatTvSourceTests
     [Fact]
     public void Yamal_TvCountMatchesPage()
     {
-        // На странице 162 строки канала: 126 с VPID и непустым именем, остальные — радио/data.
-        Assert.Equal(126, Parse("yamal601").Channels.Count);
+        // Число ТВ-строк в урезанной фикстуре (с VPID и непустым именем); радио/data отсеиваются. Посчитано по строкам таблицы.
+        // Было 126 на полной странице (162 строки канала), фикстура урезана до 28 ТВ-строк.
+        Assert.Equal(28, Parse("yamal601").Channels.Count);
     }
 
     [Fact]
@@ -146,12 +148,39 @@ public sealed class SatTvSourceTests
     }
 
     [Fact]
-    public void Channels_SortedByFrequencyThenName_AndCappedAt400()
+    public void Channels_SortedByFrequencyThenName()
     {
-        var sat = Parse("astra1p");   // на странице ~548 ТВ-каналов
-        Assert.Equal(400, sat.Channels.Count);
+        var sat = Parse("astra1p");   // урезанная фикстура: 29 ТВ-строк
         var ordered = sat.Channels.OrderBy(c => c.FreqMhz).ThenByDescending(c => c.Fta).ThenBy(c => c.Name, StringComparer.Ordinal).ToList();
         Assert.Equal(ordered.Select(c => (c.FreqMhz, c.Name)), sat.Channels.Select(c => (c.FreqMhz, c.Name)));
+    }
+
+    [Fact]
+    public void Channels_CappedAt400_OnSyntheticPage()
+    {
+        // Синтетическая страница в той же разметке, что у KingOfSat: 3 транспондера по 150 ТВ-каналов = 450 строк.
+        var sat = SatTvSource.Parse(BuildPage(3, 150), "synthetic", At);
+        Assert.Equal(400, sat.Channels.Count);
+        Assert.Equal(150, sat.Channels.Count(c => c.FreqMhz == 11000));
+        Assert.Equal(150, sat.Channels.Count(c => c.FreqMhz == 11100));
+        // Третий транспондер отрезан по порядку имён: остаются первые 100.
+        Assert.Equal(100, sat.Channels.Count(c => c.FreqMhz == 11200));
+        Assert.Equal("ch2-099", sat.Channels.Where(c => c.FreqMhz == 11200).Last().Name);
+        var ordered = sat.Channels.OrderBy(c => c.FreqMhz).ThenByDescending(c => c.Fta).ThenBy(c => c.Name, StringComparer.Ordinal).ToList();
+        Assert.Equal(ordered.Select(c => (c.FreqMhz, c.Name)), sat.Channels.Select(c => (c.FreqMhz, c.Name)));
+    }
+
+    private static string BuildPage(int transponders, int channelsEach)
+    {
+        var sb = new StringBuilder("<title>Synthetic (1.0&deg;E) - KingOfSat</title>");
+        int ch = 0;
+        for (int t = 0; t < transponders; t++)
+        {
+            sb.Append($"<tr data-frequency-id=\"{t + 1}\" class=\"frequency-row\"><td>1.0E</td><td>S</td><td>{11000 + 100 * t} H</td><td>1</td><td>C</td><td>DVB-S</td><td>QPSK</td><td>27500</td><td>3/4</td><td></td><td></td></tr>");
+            for (int i = 0; i < channelsEach; i++, ch++)
+                sb.Append($"<tr data-channel-id=\"{ch + 1}\"><td></td><td>ch{t}-{i:000}</td><td>Spain</td><td>General</td><td>P</td><td>Clear</td><td>1</td><td>33</td></tr>");
+        }
+        return sb.ToString();
     }
 
     // ---- загрузка через FakeHttp ----

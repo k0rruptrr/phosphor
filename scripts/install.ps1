@@ -61,6 +61,22 @@ if ($scrFromExe) {
     }
 }
 
+# Built-in fonts: the fonts\ subfolder of the source (TTF + OFL licence texts) goes to <install>\fonts\
+$fontsSrc = Join-Path $srcDir 'fonts'
+if (Test-Path -LiteralPath $fontsSrc -PathType Container) {
+    $fontsDst = Join-Path $dstDir 'fonts'
+    if ($PSCmdlet.ShouldProcess($fontsDst, 'Create fonts folder')) {
+        New-Item -ItemType Directory -Force -Path $fontsDst | Out-Null
+    }
+    Get-ChildItem -LiteralPath $fontsSrc -File | ForEach-Object {
+        if ($PSCmdlet.ShouldProcess((Join-Path $fontsDst $_.Name), 'Copy font file')) {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $fontsDst $_.Name) -Force
+        }
+    }
+} else {
+    Write-Host "WARNING: no fonts folder in $srcDir - built-in fonts not installed"
+}
+
 # 2. Save previous screensaver settings (only once, so re-install does not overwrite the backup)
 if (Test-Path -LiteralPath $prevFile) {
     Write-Host "Backup of previous settings already exists, keeping it: $prevFile"

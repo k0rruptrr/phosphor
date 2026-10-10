@@ -5,6 +5,7 @@
     <AssemblyName>Phosphor</AssemblyName>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\assets\logo\phosphor.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Phosphor.Core\Phosphor.Core.csproj" />
@@ -34,6 +35,6 @@
   </ItemGroup>
   <!-- Встроенные шрифты (OFL) и их лицензии: в выходе — fonts\ рядом с exe (см. FontCatalog) -->
   <ItemGroup>
-    <None Include="..\..\assets\fonts\**" Link="fonts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\assets\fonts\**" Link="fonts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 </Project>

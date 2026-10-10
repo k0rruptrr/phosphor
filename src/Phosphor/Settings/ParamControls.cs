@@ -20,9 +20,26 @@ internal sealed class SliderBox : Control
 
     public event EventHandler? ValueChanged;
 
+    /// <summary>Пока min &gt; max, диапазон некорректен: значение не клэмпится (см. SetRange — менять диапазон целиком).</summary>
     public float Minimum { get => _min; set { _min = value; Apply(_value, false); } }
 
     public float Maximum { get => _max; set { _max = value; Apply(_value, false); } }
+
+    /// <summary>
+    /// Диапазон и значение разом (без промежуточного клэмпа между Minimum и Maximum). min &gt; max — меняем местами, с предупреждением в Debug.
+    /// Событие не вызывается.
+    /// </summary>
+    public void SetRange(float min, float max, float value)
+    {
+        if (min > max)
+        {
+            System.Diagnostics.Debug.WriteLine($"SliderBox.SetRange: min {min} > max {max}, границы поменяны местами");
+            (min, max) = (max, min);
+        }
+        _min = min;
+        _max = max;
+        Apply(value, false);
+    }
 
     /// <summary>Целые значения (шаг 1).</summary>
     public bool Integer { get; set; }
@@ -32,7 +49,8 @@ internal sealed class SliderBox : Control
 
     private void Apply(float v, bool raise)
     {
-        float nv = Math.Clamp(v, _min, _max);
+        // Некорректный диапазон (min > max) — не клэмпим: Math.Clamp на нём бросает исключение. Значение поправится при корректном диапазоне.
+        float nv = _min <= _max ? Math.Clamp(v, _min, _max) : v;
         if (Integer) nv = MathF.Round(nv);
         if (nv == _value) return;
         _value = nv;

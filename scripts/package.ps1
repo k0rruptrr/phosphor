@@ -1,5 +1,5 @@
 ﻿# package.ps1 - build the hand-off package for a user without .NET:
-#   dist\PHOSPHOR-<version>\        folder: Phosphor.exe, phosphor.json, install/uninstall scripts, Установить.bat, Удалить.bat, ПРОЧТИ.txt
+#   dist\PHOSPHOR-<version>\        folder: Phosphor.exe, phosphor.json, fonts\, install/uninstall scripts, Установить.bat, Удалить.bat, ПРОЧТИ.txt
 #   dist\PHOSPHOR-<version>.zip     the same folder, zipped (root folder inside the archive)
 # <version> = ProductVersion of Phosphor.exe with '+' replaced by '-', e.g. 0.7.0+70ba44e -> 0.7.0-70ba44e
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\package.ps1 [-AllowDirty]
@@ -85,6 +85,13 @@ if ((Get-FileHash -LiteralPath $cfgRepo).Hash -ne (Get-FileHash -LiteralPath (Jo
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install.ps1') -Destination $pkgDir
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination $pkgDir
+
+# Built-in fonts: the whole fonts\ folder (TTF + OFL licence texts; the OFL requires the licence to travel with the font)
+$fontsSrc = Join-Path $phosDir 'fonts'
+if (-not (Test-Path -LiteralPath $fontsSrc -PathType Container)) { throw "fonts folder not found: $fontsSrc" }
+$fontsDst = Join-Path $pkgDir 'fonts'
+New-Item -ItemType Directory -Path $fontsDst | Out-Null
+Copy-Item -Path (Join-Path $fontsSrc '*') -Destination $fontsDst -Recurse
 
 # Templates -> user-facing files. CRLF line endings. bat: UTF-8 without BOM (chcp 65001 inside). txt: UTF-8 with BOM (Notepad).
 function Write-Template([string]$src, [string]$dst, [bool]$withBom) {

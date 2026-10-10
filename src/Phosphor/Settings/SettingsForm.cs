@@ -104,6 +104,7 @@ internal sealed class SettingsForm : Form
         _presets = new PickList(_model.GetPreset, name => { _model.CyclePreset(name); UpdatePreview(); }, _model.IsPresetModified);
 
         Text = "PHOSPHOR — настройки";
+        try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -236,8 +237,7 @@ internal sealed class SettingsForm : Form
         Num(p, _overlayPct, 0, 100, 0, LabelCol(ShuffleLabels), 266, 90);
 
         Place(p, Lbl("шлейф (моушн-блюр)"), 12, 310);
-        _trail.Minimum = 0f;
-        _trail.Maximum = 0.9f;
+        _trail.SetRange(0f, 0.9f, _trail.Value);
         _trail.Size = new Size(260, 24);
         _trail.Location = new Point(LabelCol(ShuffleLabels), 306);
         _trail.ValueChanged += (_, _) => { _model.Config.Screen.Trail = _trail.Value; ShowTrail(); UpdatePreview(); };
@@ -846,6 +846,23 @@ internal sealed class SettingsForm : Form
         return v.ToString(fmt, CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Для тестов: строка параметра сцены тем же путём, что у окна (окно не показывается).</summary>
+    internal Panel ProbeSceneParamRow(string sceneId, SceneParamSpec spec)
+    {
+        _labelCol = LabelColumn(new[] { LabelText(spec.Name, spec.Description) });
+        return SceneParamRow(sceneId, spec);
+    }
+
+    /// <summary>Для тестов: строка параметра стадии пресета тем же путём, что у окна (окно не показывается).</summary>
+    internal Panel ProbeFilterParamRow(string preset, int stage, ParamSpec spec)
+    {
+        _labelCol = LabelColumn(new[] { FilterLabel(spec) });
+        return FilterParamRow(preset, stage, spec);
+    }
+
+    /// <summary>Для тестов: форма без показа. Вызывающий освобождает форму и журнал.</summary>
+    internal static SettingsForm CreateForProbe(SettingsModel model, Log log) => new(model, "(тест)", log, livePreview: false);
+
     private Panel SceneParamRow(string sceneId, SceneParamSpec spec)
     {
         var (row, value, reset) = ParamRow(spec.Name, LabelText(spec.Name, spec.Description), spec.Description);
@@ -888,8 +905,8 @@ internal sealed class SettingsForm : Form
                 break;
             default:
                 bool integer = spec.Kind == SceneParamKind.Int;
-                var slider = new SliderBox { Minimum = spec.Min, Maximum = spec.Max, Integer = integer, Location = new Point(_labelCol, 2), Size = ControlSize(24) };
-                slider.Value = (float)v;
+                var slider = new SliderBox { Integer = integer, Location = new Point(_labelCol, 2), Size = ControlSize(24) };
+                slider.SetRange(spec.Min, spec.Max, (float)v);
                 value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, integer);
                 slider.ValueChanged += (_, _) =>
                 {
@@ -942,8 +959,8 @@ internal sealed class SettingsForm : Form
         }
         else
         {
-            var slider = new SliderBox { Minimum = spec.Min, Maximum = spec.Max, Location = new Point(_labelCol, 2), Size = ControlSize(24) };
-            slider.Value = (float)v;
+            var slider = new SliderBox { Location = new Point(_labelCol, 2), Size = ControlSize(24) };
+            slider.SetRange(spec.Min, spec.Max, (float)v);
             value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, false);
             slider.ValueChanged += (_, _) =>
             {
@@ -1166,8 +1183,7 @@ internal sealed class SettingsForm : Form
     private static void Num(Control host, NumBox n, decimal min, decimal max, int decimals, int x, int y, int w)
     {
         n.DecimalPlaces = decimals;
-        n.Minimum = min;
-        n.Maximum = max;
+        n.SetRange(min, max);
         n.Size = new Size(w, 24);
         Place(host, n, x, y);
     }
@@ -1384,6 +1400,19 @@ internal sealed class NumBox : Panel
     public decimal Minimum { get => _min; set { _min = value; Value = Value; } }
 
     public decimal Maximum { get => _max; set { _max = value; Value = Value; } }
+
+    /// <summary>Диапазон разом (без промежуточного клэмпа между Minimum и Maximum). min &gt; max — меняем местами, с предупреждением в Debug.</summary>
+    public void SetRange(decimal min, decimal max)
+    {
+        if (min > max)
+        {
+            System.Diagnostics.Debug.WriteLine($"NumBox.SetRange: min {min} > max {max}, границы поменяны местами");
+            (min, max) = (max, min);
+        }
+        _min = min;
+        _max = max;
+        Value = Value;
+    }
 
     public decimal Value
     {
