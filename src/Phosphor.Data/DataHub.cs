@@ -165,8 +165,9 @@ public sealed class DataHub : IDisposable
     {
         _perSource[s.Name] = snap;
         var sameKey = _sources.Where(x => x.Key == s.Key && _perSource.ContainsKey(x.Name)).Select(x => _perSource[x.Name]).ToList();
-        // Одна лента спутника тоже идёт через слияние: сцена получает SatelliteSetSnapshot, а не сырую ленту.
-        var merged = sameKey.Count == 1 && snap is not SatelliteFeed ? snap : _merge(s.Key, sameKey);
+        // Ключи, где merge собирает Set-снимок (satellite, sattv), всегда идут через merge — даже с одним источником:
+        // сцена получает SatelliteSetSnapshot / SatTvSetSnapshot, а не сырой снимок.
+        var merged = sameKey.Count == 1 && snap is not SatelliteFeed and not SatTvSatellite ? snap : _merge(s.Key, sameKey);
         if (merged is null) return;
         _latest[s.Key] = (merged, Interlocked.Increment(ref _version));
     }

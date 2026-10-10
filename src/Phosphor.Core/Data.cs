@@ -131,7 +131,7 @@ public sealed record SatTvSatellite(string Id, string Name, string Position, IRe
 /// <param name="Pol">'H' | 'V' | 'L' | 'R'.</param>
 /// <param name="SymbolRate">Символьная скорость, kSym/s (27500), 0 — неизвестно.</param>
 /// <param name="Fec">"3/4", "" — неизвестно.</param>
-/// <param name="Standard">"DVB-S" | "DVB-S2" | "".</param>
+/// <param name="Standard">"DVB-S" | "DVB-S2" | "DVB-S2X" | "".</param>
 /// <param name="Country">Страна/язык как на сайте, коротко: "Germany", "Russia", "" — неизвестно.</param>
 /// <param name="Fta">Открытый канал (Free To Air).</param>
 public sealed record SatTvChannel(string Name, double FreqMhz, char Pol, int SymbolRate, string Fec, string Standard,

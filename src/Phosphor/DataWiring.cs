@@ -37,6 +37,13 @@ internal static class DataWiring
             if (SatelliteSource.Create(id, where) is { } s) sources.Add(s);
             else log.Warn($"data: неизвестный источник спутника '{id}'. Есть: {string.Join(", ", SatelliteSource.Ids)}");
         }
+        // Сат-ТВ: пустой список в конфиге — спутники по умолчанию. Id — slug страницы KingOfSat (sat-<id>).
+        var satTv = net.SatTv.Count > 0 ? net.SatTv : SatTvCatalog.DefaultIds.ToList();
+        foreach (var id in satTv.Distinct())
+        {
+            if (SatTvSource.Create(id) is { } s) sources.Add(s);
+            else log.Warn($"data: неправильный спутник сат-ТВ '{id}' (нужен id страницы KingOfSat, например astra1p)");
+        }
 
         hub = new DataHub(sources, online, m => log.Info(m), (k, ps) => Merge(k, ps, net));
         hub.Start();
@@ -49,6 +56,7 @@ internal static class DataWiring
         "news" => NewsCatalog.Merge(perSource, net.CalmNews, net.CalmExtraWords),
         "teletext" => TeletextCatalog.Merge(perSource),
         "satellite" => SatelliteCatalog.Merge(perSource),
+        "sattv" => SatTvCatalog.Merge(perSource),
         _ => perSource.MaxBy(s => s.FetchedAt),
     };
 }

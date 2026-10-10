@@ -143,6 +143,24 @@ public sealed class MandelbrotSceneTests
         _out.WriteLine($"зум на 40 с: ×{s.Zoom:G4}");
     }
 
+    /// <summary>zoomSpeed=2 удваивает темп зума: log2(зума) за 5 с растёт вдвое быстрее, чем при 1 (±20 %).</summary>
+    [Fact]
+    public void ZoomSpeedParamScalesZoomRate()
+    {
+        static double Log2Zoom(float zoomSpeed)
+        {
+            var o = new SceneOptions { Params = System.Text.Json.JsonSerializer.SerializeToElement(new { zoomSpeed }) };
+            var s = (MandelbrotScene)SceneContract.Make(() => new MandelbrotScene(), 60, 20, 16, o);
+            for (int i = 0; i < 50; i++) s.Update(0.1f);     // 5 с реального времени
+            return Math.Log2(s.Zoom);
+        }
+
+        double one = Log2Zoom(1f), two = Log2Zoom(2f);
+        _out.WriteLine($"log2(зума) за 5 с: zoomSpeed=1 → {one:F3}, zoomSpeed=2 → {two:F3}, ratio {two / one:F3}");
+        Assert.True(one > 0, "при zoomSpeed=1 зум не вырос");
+        Assert.InRange(two / one, 1.6, 2.4);
+    }
+
     [Fact]
     public void RouteAdvancesToNextPoint()
     {

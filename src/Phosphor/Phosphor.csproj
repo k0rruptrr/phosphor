@@ -18,11 +18,15 @@
     <ProjectReference Include="..\Phosphor.Overlays\Phosphor.Overlays.csproj" />
     <PackageReference Include="StbImageWriteSharp" Version="1.16.7" />
   </ItemGroup>
-  <!-- Изолированная сборка сцены/фильтра: источники данных исключены из Phosphor.Data — без проводки к ним. -->
-  <ItemGroup Condition="'$(OnlyData)' == '' and ('$(OnlyScene)' != '' or '$(OnlyFilter)' != '')">
+  <!-- Изолированная сборка (OnlyScene/OnlyFilter/OnlyData): источники данных исключены из Phosphor.Data — без проводки к ним.
+       DataWiring.cs ссылается на все источники, при OnlyData=<X> их нет, поэтому берём DataWiringIsolated.cs (без источников). -->
+  <PropertyGroup>
+    <_Isolated Condition="'$(OnlyData)$(OnlyScene)$(OnlyFilter)' != ''">true</_Isolated>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(_Isolated)' == 'true'">
     <Compile Remove="DataWiring.cs" />
   </ItemGroup>
-  <ItemGroup Condition="!('$(OnlyData)' == '' and ('$(OnlyScene)' != '' or '$(OnlyFilter)' != ''))">
+  <ItemGroup Condition="'$(_Isolated)' != 'true'">
     <Compile Remove="DataWiringIsolated.cs" />
   </ItemGroup>
   <ItemGroup>

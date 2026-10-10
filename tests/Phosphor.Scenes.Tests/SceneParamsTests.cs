@@ -40,6 +40,9 @@ public sealed class SceneParamsTests
         ["TeletypeScene.idleSec"] = new(Skip: true, Reason: "проверяется подставными данными: TeletypeIdleSecChangesRestartDelay"),
         ["TeletypeScene.gapSec"] = new(Skip: true, Reason: "проверяется подставными данными: TeletypeGapSecChangesPauseBetweenItems"),
         ["WeatherBoardScene.stepSec"] = new(Skip: true, Reason: "проверяется подставными данными: WeatherStepSecChangesFlipSpeed"),
+        ["SatTvScene.scrollSec"] = new(Skip: true, Reason: "проверяется подставными данными: ScrollSecParamSetsStepLength"),
+        ["SatTvScene.maxChannels"] = new(Skip: true, Reason: "проверяется подставными данными: MaxChannelsLimitsChannelsPerEpisode"),
+        ["SatTvScene.style"] = new(Skip: true, Reason: "проверяется подставными данными: ThreeStylesGiveDifferentBackgrounds"),
     };
 
     private readonly ITestOutputHelper _out;

@@ -102,6 +102,7 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 | `network.city` | `"Москва"` | Город для погоды (любое название, геокодер Open-Meteo) |
 | `network.news` | `["tass","bbc","reddit:worldnews"]` | Источники новостей, см. ниже |
 | `network.teletext` | `["svt","nos"]` | Каналы телетекста: `nos`, `svt` |
+| `network.satTv` | `[]` | Спутники сцены «сат-ТВ» — id страниц KingOfSat (`en.kingofsat.info/sat-<id>`, например `astra1p`, `hb13g`, `yamal601`). Пусто — `astra1p`, `hb13g`, `eutelsat36d`, `yamal601`, `eam7` |
 | `exit.mouseThresholdPx` | `12` | Сколько пикселей движения мыши выключают заставку |
 | `screen.trail` | `0` | Шлейф (моушн-блюр) поверх любой сцены и пресета: доля предыдущего кадра, 0 — выкл, до 0.9 |
 | `dimmer.enabled` | `false` | Диммер: через `dimmer.delayMin` минут заставка плавно гасит мониторы |
@@ -146,6 +147,7 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 | grayscott | `stepsPerSec` | число | 50..1000 | 300 | шагов симуляции в секунду |
 | life | `genPerSec` | число | 0..60 | 12 | поколений в секунду |
 | mandelbrot | `colorSpeed` | число | 0..0.5 | 0.04 | скорость смены палитры, циклов/с |
+| mandelbrot | `zoomSpeed` | число | 0.25..4 | 1 | скорость зума (× от обычной) |
 | matrix | `minSpeed` | число | 0..60 | 6 | скорость падения: минимум |
 | matrix | `maxSpeed` | число | 0..60 | 22 | скорость падения: максимум |
 | matrix | `density` | число | 0..1 | 0.6 | плотность дождя |
@@ -180,6 +182,8 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 ## Сеть и Fort Firewall
 
 Новости, погода и телетекст качаются в фоне и кешируются. Превью (`/p`) сеть не использует.
+
+Списки ТВ-каналов для сцены «сат-ТВ» берутся с KingOfSat (`en.kingofsat.info`, страница каждого спутника в `network.satTv`). Обновление — не чаще раза в сутки на спутник, дальше работает кеш. Учитываются только ТВ-каналы (радио и data отсеиваются), открытые — по колонке Encryption (`Clear`).
 
 Если установлен Fort Firewall, новый exe может не получить доступ в сеть: в логе будет ошибка `10013` (запрещён доступ к сокету). Разрешите сеть для полного пути:
 

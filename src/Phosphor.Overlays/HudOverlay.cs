@@ -743,15 +743,18 @@ public sealed class HudOverlay : IOverlay
     {
         if (!_vis[GateRuler]) return;
         Rgba rc = Label.Scale(0.6f);
+        // На плотной сцене подписи светлее и без затемнения: читаются на ярком фоне.
+        Rgba lc = _dense ? Rgba.Hex(0xA8A8A8) : rc;
         for (int y = 3; y <= _rows - 4; y++)
         {
-            Plate(g, SafeX, y, SafeX + 3);
             if (y % 9 == 0)
             {
-                Mark(g, SafeX, y, '┼', rc);
+                // Плашка только под подписью числа: засечка + число + 1 клетка запаса справа (свечение).
+                Plate(g, SafeX, y, SafeX + 4);
+                Mark(g, SafeX, y, '┼', lc);
                 BReset();
                 BInt(y % 100, 2);
-                PutBuf(g, SafeX + 2, y, rc);
+                PutBuf(g, SafeX + 2, y, lc);
             }
             else if (y % 3 == 0)
             {

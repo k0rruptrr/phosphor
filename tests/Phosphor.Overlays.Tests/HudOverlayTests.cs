@@ -318,6 +318,49 @@ public class HudOverlayTests
     }
 
     [Fact]
+    public void DenseRuler_PlateOnlyUnderLabelRows()
+    {
+        const int cols = 192, rows = 60;
+        var bg = Rgba.Hex(0x303030);
+        var grid = new CharGrid(cols, rows);
+        void Content(CharGrid g)
+        {
+            // Плотная сцена: все ячейки заняты яркими символами на сером фоне.
+            for (int i = 0; i < g.Cells.Length; i++) g.Cells[i] = new Cell('█', Rgba.White, bg);
+        }
+        var hud = new HudOverlay();
+        hud.Init(cols, rows, new Random(1));
+        var ctx = Ctx();
+        for (int f = 0; f < 5; f++)
+        {
+            Paint(grid, Content);
+            hud.Update(Dt);
+            hud.Apply(grid, ctx);
+        }
+
+        Assert.True(hud.Dense, "сцена должна считаться плотной");
+        int labelRows = 0, black = 0, blackUnlabeled = 0, changedUnlabeled = 0;
+        for (int y = 3; y <= rows - 4; y++)
+        {
+            bool label = y % 9 == 0;
+            if (label) labelRows++;
+            for (int x = 2; x <= 5; x++)   // колонка линейки: засечка и число
+            {
+                Rgba cellBg = grid.Cells[y * cols + x].Bg;
+                if (cellBg == Rgba.Black)
+                {
+                    black++;
+                    if (!label) blackUnlabeled++;
+                }
+                if (!label && cellBg != bg) changedUnlabeled++;
+            }
+        }
+        int limit = labelRows * (2 + 2);   // число строк с подписью × (ширина подписи 2 + 2)
+        Assert.True(black <= limit, $"чёрных клеток в колонке линейки: {black} (на строках без подписи: {blackUnlabeled}), лимит {limit}");
+        Assert.True(changedUnlabeled == 0, $"Bg изменён в {changedUnlabeled} клетках строк без подписи");
+    }
+
+    [Fact]
     public void Aquarium_Labels_InSafeZone_AndNearCorner()
     {
         const int cols = 192, rows = 60;

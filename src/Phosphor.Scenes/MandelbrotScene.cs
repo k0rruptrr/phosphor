@@ -15,11 +15,13 @@ public sealed class MandelbrotScene : IScene, IAudioReactive, ISceneParams
 {
     // Параметры для окна настроек.
     public static readonly SceneParamSpec ColorSpec = new("colorSpeed", SceneParamKind.Float, 0.04f, 0f, 0.5f, "скорость смены палитры, циклов/с");
-    private static readonly SceneParamSpec[] ParamList = { ColorSpec };
+    public static readonly SceneParamSpec ZoomSpec = new("zoomSpeed", SceneParamKind.Float, 1f, 0.25f, 4f, "скорость зума (× от обычной)");
+    private static readonly SceneParamSpec[] ParamList = { ColorSpec, ZoomSpec };
 
     public IReadOnlyList<SceneParamSpec> Params => ParamList;
 
     private float _colorSpeed;
+    private float _zoomSpeed;
 
     private enum Phase { Zoom, FadeOut, FadeIn }
 
@@ -28,7 +30,8 @@ public sealed class MandelbrotScene : IScene, IAudioReactive, ISceneParams
     private const int MaxIterCap = 1500;
     private const double StartScale = 2.5;       // ширина видимой области в начале зума, в единицах комплексной плоскости
     private const double EndScale = 1e-11;       // предел double: дальше пикселизация
-    private const float DoublingTime = 7f;       // секунд на ×2
+    private const float DoublingTime = 7f;       // единиц зум-времени на ×2 (зум-время — не реальные секунды, см. ZoomRate)
+    private const float ZoomRate = 2f;           // базовый темп зума: зум-время растёт в 2 раза быстрее реального времени (×2 к прежнему)
     private const float FadeTime = 1.2f;         // затемнение / проявление при смене точки, с
     private const float ColorPeriod = 24f;       // итераций на один цикл палитры
     private const float KickMin = 0.06f, KickMax = 0.10f; // рывок прокрутки на удар, циклов палитры
@@ -86,10 +89,10 @@ public sealed class MandelbrotScene : IScene, IAudioReactive, ISceneParams
     /// <summary>Текущая ширина видимой области, единицы комплексной плоскости.</summary>
     public double Scale => Math.Max(EndScale, StartScale * Math.Pow(2.0, -_zoomTime / DoublingTime));
 
-    /// <summary>Время зума внутри текущей точки, с (симуляционное).</summary>
+    /// <summary>Время зума внутри текущей точки, зум-секунды (при zoomSpeed=1 идут в ZoomRate раз быстрее реальных).</summary>
     public float ZoomTime => _zoomTime;
 
-    /// <summary>Длительность зума одной точки до EndScale, с.</summary>
+    /// <summary>Длительность зума одной точки до EndScale, зум-секунды (реальная — ZoomEnd / (ZoomRate · zoomSpeed)).</summary>
     public static float ZoomDurationSeconds => ZoomEnd;
 
     /// <summary>Число точек маршрута.</summary>
@@ -143,6 +146,7 @@ public sealed class MandelbrotScene : IScene, IAudioReactive, ISceneParams
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
         _colorSpeed = Math.Clamp(options.GetFloat(ColorSpec.Name, ColorSpec.Default), ColorSpec.Min, ColorSpec.Max);
+        _zoomSpeed = Math.Clamp(options.GetFloat(ZoomSpec.Name, ZoomSpec.Default), ZoomSpec.Min, ZoomSpec.Max);
         _rng = rng;
         _speed = MathF.Max(0f, options.Speed);
         _canvas = new RetroCanvas(cols, rows, CanvasMode.HalfBlock);
@@ -237,7 +241,7 @@ public sealed class MandelbrotScene : IScene, IAudioReactive, ISceneParams
         switch (_phase)
         {
             case Phase.Zoom:
-                _zoomTime += dt;
+                _zoomTime += dt * _zoomSpeed * ZoomRate;   // темп зума только здесь; цвет, цель и переходы — по реальному dt
                 if (_zoomTime >= ZoomEnd)
                 {
                     _zoomTime = ZoomEnd;
@@ -440,6 +444,7 @@ public sealed class MandelbrotScene : IScene, IAudioReactive, ISceneParams
     /// Строка: пересчёт на чередование (полу-кадр, как interlace) — только строки текущей четности,
     /// остальные берут сырые значения с прошлого кадра. Зум за кадр ≈ 0.14 %, рассинхрон под разрешением
     /// пикселя; раскраска и границы пересчитываются каждый кадр (вспышка, прокрутка, размер пикселя).
+    /// При ZoomRate=2 и zoomSpeed=1 зум за кадр (60 к/с) ≈ 0.33 %, при zoomSpeed=4 ≈ 1.3 % — рассинхрон строк растёт.
     /// Полный пересчёт — после смены точки и при Init.
     /// </summary>
     private void RenderRow(int y)

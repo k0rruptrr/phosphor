@@ -4,9 +4,12 @@
     <!-- Только для разбора крошечных GIF мозаики SVT Text (Windows-only, как и весь проект). -->
     <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
   </ItemGroup>
-  <!-- Изоляция: -p:OnlyData=News компилирует только общие файлы + Sources\NewsSource.cs -->
+  <!-- Изоляция: -p:OnlyData=News компилирует только общие файлы + Sources\NewsSource.cs
+       + Sources\NewsCatalog.cs (если есть) + Sources\CalmFilter.cs (нужен новостям). -->
   <ItemGroup Condition="'$(OnlyData)' != ''">
     <_Keep Include="IDataSource.cs;DataHub.cs;Common\**\*.cs;Sources\$(OnlyData)Source.cs" />
+    <_Keep Condition="Exists('Sources\$(OnlyData)Catalog.cs')" Include="Sources\$(OnlyData)Catalog.cs" />
+    <_Keep Condition="'$(OnlyData.ToLowerInvariant())' == 'news'" Include="Sources\CalmFilter.cs" />
     <Compile Remove="**\*.cs" />
     <Compile Include="@(_Keep->Distinct())" />
   </ItemGroup>
