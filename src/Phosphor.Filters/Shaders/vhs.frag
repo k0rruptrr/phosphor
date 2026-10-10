@@ -19,8 +19,7 @@ uniform float p_saturation;
 uniform float p_dropouts;
 
 const float TAU = 6.2831853;
-const float SKEW_ZONE = 0.04;     // нижние 4% кадра
-const float EVENT_SLOT = 15.0;    // слот редкого прохода полосы, с (событие в его начале, 0..5 с)
+const float SKEW_ZONE = 0.025;    // шов головок: нижние 2.5% кадра (CRT прячет низ по углам)
 const float STREAK_CELL = 160.0;  // ширина ячейки горизонтальных штрихов, px
 const int BLEED_TAPS = 10;
 
@@ -84,23 +83,29 @@ void main() {
                                 + 0.4 * sin(uTime * 0.37 + vUv.y * TAU * 0.4 + 1.7));
     float jit = p_jitter * floor(rnd3(grp, fr, 11u) * 4.0);     // 0..3 px × jitter
 
-    // Полоса трекинга.
-    // Сила дышит во времени: от 0.4 до 1 от tracking.
-    float S = p_tracking * (0.4 + 0.6 * vnoise(tm * 0.2, 101u));
-    // Покой: нижние ~15–25% кадра, медленный дрейф по гладкому шуму.
-    float yRest = 0.16 + 0.04 * (2.0 * vnoise(tm * 0.05, 102u) - 1.0);
-    // Редкий проход: слот 15 с, событие в его начале (0..5 с), длится 1–2 с. Интервал 10–20 с.
-    uint slot = uint(floor(tm / EVENT_SLOT));
-    float tSlot = tm - float(slot) * EVENT_SLOT;
-    float evStart = 5.0 * rnd3(slot, 1u, 0u);
-    float evLen = 1.0 + rnd3(slot, 2u, 0u);
-    float p = (tSlot - evStart) / evLen;
-    float evE = smoothstep(0.0, 0.05, p) * (1.0 - smoothstep(0.9, 1.0, p));
-    float sweepY = mix(yRest, 1.1, smoothstep(0.0, 1.0, clamp(p, 0.0, 1.0)));
-    float yc = mix(yRest, sweepY, evE);
+    // Автотрекинг: эпизоды, только при tracking >= 0.25. Пауза между эпизодами от 25 с (0.25) до 6 с (1),
+    // эпизод начинается в слоте со случайным сдвигом 0..0.5 с, длится 1.5–3 с. Всё от номера слота (хеш).
+    float t01 = clamp((p_tracking - 0.25) / 0.75, 0.0, 1.0);
+    float gap = mix(25.0, 6.0, t01);
+    float period = gap + 3.5;                      // слот: пауза + максимальная длина эпизода и сдвига
+    uint epi = uint(floor(tm / period));
+    float ph = tm - float(epi) * period;
+    float epOff = 0.5 * rnd3(epi, 21u, 0u);
+    float epLen = 1.5 + 1.5 * rnd3(epi, 22u, 0u);
+    float te = ph - epOff;                         // время от начала эпизода
+    float f = te / epLen;                          // 0..1 внутри эпизода
+    bool inEp = p_tracking >= 0.25 && te >= 0.0 && f <= 1.0;
+    // Первые ~30% — полоса во всю силу; дальше «автотрекинг тянет»: полоса сужается и гаснет.
+    float env = inEp ? (smoothstep(0.0, 0.03, f) * (1.0 - smoothstep(0.3, 1.0, f))) : 0.0;
+    // Высота: случайная в слоте, ползёт и дрожит; иногда один короткий перескок во второй половине.
+    float yBase = 0.1 + 0.8 * rnd3(epi, 25u, 0u);
+    float jump = (rnd3(epi, 24u, 0u) < 0.5 && f > 0.5) ? 0.15 * (2.0 * rnd3(epi, 26u, 0u) - 1.0) : 0.0;
+    float yc = yBase + 0.02 * f + 0.004 * sin(tm * 23.0) + jump;
+    // Сила: tracking внутри эпизода, с «дыханием» по шуму.
+    float S = p_tracking * env * (0.4 + 0.6 * vnoise(tm * 2.0, 101u));
 
-    // Колокол e(y): полуширина зависит от tracking, край рваный по x (масштаб ~ 1/8 ширины).
-    float sg = 0.03 + 0.05 * p_tracking;
+    // Колокол e(y): полуширина зависит от tracking и сужается вместе с затуханием, край рваный по x.
+    float sg = (0.03 + 0.05 * p_tracking) * (0.5 + 0.5 * env);
     float ragged = vnoise(vUv.x * 8.0 + tm * 0.15, 31u) - 0.5;
     float sgx = sg * (0.75 + 0.5 * vnoise(vUv.x * 6.0 + tm * 0.1, 32u));
     float dy = vUv.y - yc - sg * 0.8 * ragged;
@@ -114,15 +119,40 @@ void main() {
     float ng = 2.0 * vnoise(tm * 2.5, bg + 1000u) - 1.0;
     float bandShift = e * 30.0 * S * ng;
 
-    float tb = clamp(1.0 - vUv.y / SKEW_ZONE, 0.0, 1.0);
-    float skew = p_bottomSkew * 40.0 * tb * (0.6 + 0.4 * rnd3(row, fr, 13u));
+    // Шов переключения головок: нижние 2.5% кадра. Верхний край рваный по x (частый шум), дрожит каждый кадр.
+    float zt = SKEW_ZONE * (0.85 + 0.3 * vnoise(vUv.x * 60.0, 33u)) + 0.0008 * (rnd3(fr, 5u, 0u) - 0.5);
+    float tb = clamp(1.0 - vUv.y / zt, 0.0, 1.0);
+    float inZone = step(vUv.y, zt);
+    // Растянутая копия: строки зоны берут пиксели с одной-двух строк у верхней границы шва
+    // (источник меняется раз в несколько кадров). Вертикальный смаз, сдвиг по x — выше.
+    // Источник — самая яркая из пяти строк чуть выше верхней границы шва (средняя по 8 точкам x), один на весь кадр,
+    // чтобы копия несла содержимое, а не тёмный низ кадра.
+    float ySrc = 0.0;
+    if (inZone > 0.5) {
+        float bestL = -1.0;
+        for (int k = 0; k < 5; k++) {
+            float yk = 0.030 + 0.0012 * float(k);
+            float lsum = 0.0;
+            for (int j = 0; j < 8; j++) {
+                vec3 s = texture(uInput, vec2((float(j) + 0.5) / 8.0, yk)).rgb;
+                lsum += dot(s, vec3(0.299, 0.587, 0.114));
+            }
+            if (lsum > bestL) { bestL = lsum; ySrc = yk; }
+        }
+    }
+    float vy = mix(vUv.y, ySrc, inZone);
+    // Куски строк: ячейки 96 px по x, пара строк — один блок. В каждой ячейке свой множитель (0.25..1),
+    // на границах ячеек строка рвётся: глифы надламываются резкими краями.
+    uint cx = uint(floor(px.x / 96.0));
+    float cm = rnd3(row >> 1u, cx, fr + 13u);
+    float skew = p_bottomSkew * 45.0 * tb * (0.25 + 0.75 * cm);
 
     float D = wob + jit + bandShift + skew;
     float xg = vUv.x - D / res.x;
 
     // 2. Выборка: Y резкая (1 тап с rgbShift), I/Q размыты влево от точки, цвет тянется вправо.
     float rs = p_rgbShift / res.x;
-    vec3 c0 = fetchRGB(xg, vUv.y, rs);
+    vec3 c0 = fetchRGB(xg, vy, rs);
     vec3 yiq0 = toYIQ(c0);
     float L = 10.0 * p_bleed / res.x;
     float sI = 0.0;
@@ -131,7 +161,7 @@ void main() {
     for (int i = 0; i < BLEED_TAPS; i++) {
         float t = float(i) / float(BLEED_TAPS - 1);
         float w = 1.0 - 0.6 * t;
-        vec3 q = toYIQ(fetchRGB(xg - L * t, vUv.y, rs));
+        vec3 q = toYIQ(fetchRGB(xg - L * t, vy, rs));
         sI += q.y * w;
         sQ += q.z * w;
         sW += w;
@@ -192,6 +222,11 @@ void main() {
         }
     }
     col = mix(col, vec3(0.92), 0.9 * drop);
+
+    // Шов головок: песок внутри зоны и тонкая светлая линия-стык над ней.
+    col += inZone * (rnd3(xi, row, fr + 2000u) - 0.5) * 0.06 * p_bottomSkew;
+    float seamLine = exp(-pow((vUv.y - zt - 0.0018) / 0.0010, 2.0));
+    col += seamLine * 0.18 * p_bottomSkew;
 
     col = max(col, 0.0);                                          // снизу клампим: без отрицательных цветов
     fragColor = vec4(col, 1.0);

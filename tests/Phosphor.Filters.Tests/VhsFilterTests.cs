@@ -145,16 +145,20 @@ public class VhsFilterTests
         using var gpu = new GpuHarness(640, 360);
         gpu.SetInput((x, y) => (0.5f, 0.5f, 0.5f));
         using var f = gpu.Create<VhsFilter>();
-        foreach (var frame in new long[] { 60, 180, 300, 420, 540 })
+        // Полоса есть только в эпизодах автотрекинга (0..20 с): берём первые кадры с заметной полосой.
+        int checkedFrames = 0;
+        for (long frame = 0; frame <= 1200 && checkedFrames < 3; frame += 6)
         {
             // Скользящее окно 7 строк: штрихи — шум строки, а не жёсткость края; проверяем огибающую полосы.
             var prof = Smooth(RowMeanDev(gpu.Run(f, frame, BandOnly)), 7);
             float maxJump = 0f, peak = 0f;
             for (int y = 1; y < prof.Length; y++) maxJump = Math.Max(maxJump, Math.Abs(prof[y] - prof[y - 1]));
             foreach (var v in prof) peak = Math.Max(peak, Math.Abs(v));
+            if (peak <= 0.08f) continue;
             Assert.True(maxJump < 0.12f, $"кадр {frame}: скачок между соседними строками {maxJump:F3}");
-            Assert.True(peak > 0.08f, $"кадр {frame}: пик отклонения {peak:F3}");
+            checkedFrames++;
         }
+        Assert.Equal(3, checkedFrames);
     }
 
     [Fact]
@@ -163,7 +167,16 @@ public class VhsFilterTests
         using var gpu = new GpuHarness(640, 360);
         gpu.SetInput((x, y) => (0.5f, 0.5f, 0.5f));
         using var f = gpu.Create<VhsFilter>();
-        var img = gpu.Run(f, 300, BandOnly);
+        // Кадр с самой сильной полосой в окне 0..20 с (полоса есть только в эпизодах).
+        long bestFrame = 0;
+        float bestPeak = -1f;
+        for (long frame = 0; frame <= 1200; frame += 6)
+        {
+            float pk = 0f;
+            foreach (var v in RowMeanDev(gpu.Run(f, frame, BandOnly))) pk = Math.Max(pk, Math.Abs(v));
+            if (pk > bestPeak) { bestPeak = pk; bestFrame = frame; }
+        }
+        var img = gpu.Run(f, bestFrame, BandOnly);
         int h = img.GetLength(0), w = img.GetLength(1);
         var prof = RowMeanDev(img);
         float peak = 0f;
@@ -209,20 +222,193 @@ public class VhsFilterTests
         Assert.True(hCorr > vCorr, $"горизонталь {hCorr:F3} должна быть больше вертикали {vCorr:F3}");
     }
 
-    [Fact]
-    public void Band_RestsInLowerThirdOfFrame_Over600Frames()
+    // ---- Шов головок, покой и автотрекинг: вход — вертикальные полосы (сдвиг строк виден по корреляции) ----
+
+    /// <summary>Яркость входа по x: полосы по 32 px светлых/тёмных, период 64 px. Одинаковы в каждой строке.</summary>
+    private static float Stripe(int x) => (((x % 64) + 64) % 64) < 32 ? 0.2f : 0.8f;
+
+    /// <summary>
+    /// Сдвиг строки y (вправо — плюс) по лучшему совпадению с полосами, поиск в [-range, range].
+    /// Сравниваются только x в [margin, w - margin).
+    /// </summary>
+    private static int BestShift(float[,,] img, int y, int range)
     {
-        using var gpu = new GpuHarness(320, 180);
-        gpu.SetInput((x, y) => (0.5f, 0.5f, 0.5f));
+        int w = img.GetLength(1);
+        return BestShiftWindow(img, y, 40, w - 40, range);
+    }
+
+    /// <summary>То же, но только для x в [x0, x1).</summary>
+    private static int BestShiftWindow(float[,,] img, int y, int x0, int x1, int range)
+    {
+        int best = 0;
+        double bestErr = double.MaxValue;
+        for (int s = -range; s <= range; s++)
+        {
+            double err = 0;
+            for (int x = x0; x < x1; x++) err += Math.Abs(GpuHarness.Luma(img, x, y) - Stripe(x - s));
+            if (err < bestErr) { bestErr = err; best = s; }
+        }
+        return best;
+    }
+
+    /// <summary>Максимум |сдвига| по строкам с шагом step в диапазоне [yFrom, yTo].</summary>
+    private static int MaxRowShift(float[,,] img, int range, int yFrom, int yTo, int step)
+    {
+        int m = 0;
+        for (int y = yFrom; y <= yTo; y += step) m = Math.Max(m, Math.Abs(BestShift(img, y, range)));
+        return m;
+    }
+
+    private static Dictionary<string, float> StripeOnly(float tracking, float bottomSkew) => new()
+    {
+        ["jitter"] = 0f,
+        ["noise"] = 0f,
+        ["wobble"] = 0f,
+        ["tracking"] = tracking,
+        ["rgbShift"] = 0f,
+        ["dropouts"] = 0f,
+        ["bottomSkew"] = bottomSkew,
+    };
+
+    [Fact]
+    public void Seam_BottomRowsShifted_UpperRowsNot()
+    {
+        const int W = 640, H = 360;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (Stripe(x), Stripe(x), Stripe(x)));
         using var f = gpu.Create<VhsFilter>();
-        int h = 180, inLow = 0;
+        var img = gpu.Run(f, 300, StripeOnly(0f, 0.6f));
+
+        // Нижние 2.5% высоты (≈9 строк): по окнам 128 px сдвиг каждой строки в среднем >= 5 px,
+        // и у части строк сдвиг меняется между соседними окнами (надлом строки)
+        const int win = 128;
+        var all = new List<int>();
+        int rowsBroken = 0;
+        for (int y = H - 9; y < H; y++)
+        {
+            var shifts = new List<int>();
+            for (int x0 = 40; x0 + win <= W - 40; x0 += win) shifts.Add(BestShiftWindow(img, y, x0, x0 + win, 30));
+            all.AddRange(shifts.Select(Math.Abs));
+            if (shifts.Max() - shifts.Min() >= 5) rowsBroken++;
+        }
+        double mean = all.Average();
+        Assert.True(mean >= 5.0, $"средний сдвиг строк шва {mean:F2}");
+        Assert.True(rowsBroken >= 3, $"строк с надломом (сдвиг меняется между окнами) {rowsBroken}");
+
+        // Строки выше 4% от низа не сдвинуты
+        for (int y = 0; y <= H - 16; y += 7)
+        {
+            int s = BestShift(img, y, 30);
+            Assert.True(Math.Abs(s) <= 0, $"строка {y} выше шва сдвинута на {s} px");
+        }
+    }
+
+    [Fact]
+    public void Seam_ZoneRowsAreStretchedCopyOfSourceRow()
+    {
+        // Вход зависит от y: амплитуда полос меняется по строкам, поэтому среднее строки — отпечаток строки.
+        const int W = 640, H = 360;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => { float v = Stripe(x) * (0.5f + 0.5f * MathF.Sin(y * 1.7f)); return (v, v, v); });
+        using var f = gpu.Create<VhsFilter>();
+        var img = gpu.Run(f, 300, StripeOnly(0f, 0.6f));
+
+        // Средняя яркость строки по x в [40, W-40)
+        float RowMean(int y)
+        {
+            double s = 0;
+            for (int x = 40; x < W - 40; x++) s += GpuHarness.Luma(img, x, y);
+            return (float)(s / (W - 80));
+        }
+
+        // Строки зоны (нижние 7 строк, выше линии-стыка) почти одинаковы: копия одной строки
+        var zone = new List<float>();
+        for (int y = H - 7; y < H; y++) zone.Add(RowMean(y));
+        float lo = zone.Min(), hi = zone.Max();
+        Assert.True(hi - lo < 0.02f, $"строки зоны не совпадают между собой: {lo:F3}..{hi:F3}");
+
+        // Строка выше зоны другая: зона не является исходной картинкой
+        float maxDiff = 0f;
+        for (int y = H - 16; y <= H - 12; y++) maxDiff = Math.Max(maxDiff, Math.Abs(RowMean(y) - zone[0]));
+        Assert.True(maxDiff > 0.05f, $"строки над зоной не отличаются от зоны: максимум разницы {maxDiff:F3}");
+    }
+
+    [Fact]
+    public void NoBand_AtRest_TrackingBelowThreshold_600Frames()
+    {
+        const int W = 320, H = 180;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (Stripe(x), Stripe(x), Stripe(x)));
+        using var f = gpu.Create<VhsFilter>();
+        var o = StripeOnly(0.1f, 0.5f);
         for (long frame = 0; frame < 600; frame++)
         {
-            var prof = RowMeanDev(gpu.Run(f, frame, BandOnly));
-            int c = 0;
-            for (int y = 1; y < h; y++) if (prof[y] > prof[c]) c = y;   // строка пика (0 — верх)
-            if (h - 1 - c < 0.3f * h) inLow++;                           // от низа кадра
+            var img = gpu.Run(f, frame, o);
+            // Средние 90% высоты (строки 5%..95%) не сдвинуты больше чем на 2 px
+            for (int y = H / 20; y <= H - H / 20; y += 3)
+            {
+                int s = BestShift(img, y, 6);
+                Assert.True(Math.Abs(s) <= 2, $"кадр {frame}, строка {y}: сдвиг {s} px при tracking=0.1");
+            }
         }
-        Assert.True(inLow >= 0.7 * 600, $"центр полосы в нижних 30% кадра: {inLow} из 600");
+    }
+
+    [Fact]
+    public void Episode_TrackingOne_AppearsAndFadesWithin20Seconds()
+    {
+        const int W = 320, H = 180;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (Stripe(x), Stripe(x), Stripe(x)));
+        using var f = gpu.Create<VhsFilter>();
+        var o = StripeOnly(1f, 0.5f);
+
+        // Максимум сдвига строк по кадрам, шаг 6 кадров (0.1 с), окно 0..20 с
+        var m = new List<int>();
+        for (long frame = 0; frame <= 1200; frame += 6)
+            m.Add(MaxRowShift(gpu.Run(f, frame, o), 30, H / 10, H * 9 / 10, 6));
+
+        int first = m.FindIndex(v => v > 8);
+        Assert.True(first >= 0, "в окне 0..20 с нет кадров со сдвигом строк > 8 px");
+
+        // Границы найденного эпизода: соседние отсчёты со сдвигом > 2 px
+        int start = first;
+        while (start > 0 && m[start - 1] > 2) start--;
+        int end = first;
+        while (end + 1 < m.Count && m[end + 1] > 2) end++;
+        int len = end - start + 1;
+        Assert.True(len >= 6, $"эпизод слишком короткий: {len} отсчётов");
+
+        int third = len / 3;
+        int maxFirst = m.Skip(start).Take(third).Max();
+        int maxLast = m.Skip(end - third + 1).Take(third).Max();
+        Assert.True(maxFirst > 8, $"пик эпизода {maxFirst} px");
+        Assert.True(maxLast < maxFirst, $"затухание: в последней трети {maxLast} px, в первой {maxFirst} px");
+    }
+
+    [Fact]
+    public void Pause_TrackingQuarter_AtLeast20SecondsClean()
+    {
+        const int W = 320, H = 180;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (Stripe(x), Stripe(x), Stripe(x)));
+        using var f = gpu.Create<VhsFilter>();
+        var o = StripeOnly(0.25f, 0.5f);
+
+        // Моменты (с) с заметной полосой, шаг 0.2 с, окно 0..120 с
+        var active = new List<double>();
+        for (long frame = 0; frame <= 7200; frame += 12)
+            if (MaxRowShift(gpu.Run(f, frame, o), 15, H / 10, H * 9 / 10, 9) > 1) active.Add(frame / 60.0);
+
+        Assert.True(active.Count > 0, "при tracking=0.25 за 120 с не найдено ни одного эпизода");
+        // Между эпизодами — не меньше 20 с чистых кадров
+        int gaps = 0;
+        for (int i = 0; i + 1 < active.Count; i++)
+        {
+            double gap = active[i + 1] - active[i];
+            if (gap <= 2.0) continue;   // внутри одного эпизода
+            gaps++;
+            Assert.True(gap >= 20.0, $"пауза между эпизодами {gap:F1} с (с {active[i]:F1} с)");
+        }
+        Assert.True(gaps >= 2, $"найдено пауз между эпизодами: {gaps}");
     }
 }

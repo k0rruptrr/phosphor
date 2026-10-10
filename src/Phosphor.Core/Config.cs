@@ -152,11 +152,11 @@ public sealed class PhosphorConfig
                         { "id": "crt", "mod": { "brightness": { "src": "breath", "amount": 0.12 } } } ],
           "amber":    [ { "id": "mono", "contrast": 1.15 }, { "id": "phosphor", "color": "amber", "persistence": 0.86, "mod": { "persistence": { "src": "night", "amount": 0.08 } } },
                         { "id": "crt", "curvature": 0.1, "mod": { "brightness": { "src": "breath", "amount": 0.1 } } } ],
-          "kassette": [ { "id": "vhs", "mod": { "tracking": { "src": "fatigue", "amount": 0.4 }, "noise": { "src": "fatigue", "amount": 0.15 } } },
+          "kassette": [ { "id": "vhs", "mod": { "tracking": { "src": "fatigue", "amount": 0.6 } } },
                         { "id": "chroma", "amount": 1.5 },
                         { "id": "crt", "curvature": 0.06 } ],
           "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt", "curvature": 0.08 } ],
-          "secam":    [ { "id": "tv", "mode": "secam" }, { "id": "crt", "curvature": 0.08 } ],
+          "secam":    [ { "id": "tv", "mode": "secam", "mod": { "signal": { "src": "fatigue", "amount": -0.5 } } }, { "id": "crt", "curvature": 0.08 } ],
           "ntsc":     [ { "id": "tv", "mode": "ntsc" }, { "id": "crt", "curvature": 0.08 } ],
           "rave":     [ { "id": "chroma", "amount": 0.6, "mod": { "amount": { "src": "beatPulse", "amount": 1.2 } } },
                         { "id": "crt", "mod": { "bloom": { "src": "bass", "amount": 0.4 } } } ]
@@ -173,7 +173,7 @@ public sealed class PhosphorConfig
         "beatSync": true,
         "phraseBeats": 64
       },
-      "overlay": { "enabled": true, "id": "hud", "probability": 0.4 },
+      "overlay": { "enabled": true, "id": "hud", "probability": 0.4, "vcr": true },
       "audio": { "enabled": true, "sensitivity": 1.0, "maxPulse": 0.8, "minBeatIntervalMs": 250 },
       "network": { "enabled": true, "city": "Москва", "news": ["nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc"], "calmNews": true, "teletext": ["svt", "nos"], "satellite": ["meteosat", "himawari", "viirs"] },
       "dimmer": { "enabled": false, "delayMin": 10, "fadeSec": 60, "hardware": true, "hardwareLevel": 0, "softwareLevel": 0.25 },
@@ -247,6 +247,12 @@ public sealed class OverlayConfig
     public string Id { get; set; } = "hud";
     /// <summary>Вероятность, что очередная сцена получит оверлей (0..1). Сцены со своим HUD — никогда.</summary>
     public double Probability { get; set; } = 0.4;
+    /// <summary>OSD видика (VcrOverlay) поверх пресетов со стадией vhs. Не зависит от HUD.</summary>
+    public bool Vcr { get; set; } = true;
+
+    /// <summary>Нужен ли OSD видика для цепочки стадий пресета (id фильтров по порядку).</summary>
+    public bool VcrFor(IEnumerable<string> filterIds) =>
+        Vcr && filterIds.Any(id => string.Equals(id, "vhs", StringComparison.OrdinalIgnoreCase));
 }
 
 /// <summary>Сетевые данные. Всё качается в фоне и кешируется; без сети сцены работают на кеше.</summary>

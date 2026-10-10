@@ -93,6 +93,7 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 | `shuffle.presetOnDrop` | `true` | Новый пресет при смене сцены |
 | `shuffle.randomFilterChains` | `false` | Случайные цепочки фильтров вместо пресетов (не рекомендуется) |
 | `shuffle.favoriteWeight` | `3` | Во сколько раз любимые сцены/пресеты выпадают чаще обычных, 1..10 |
+| `overlay.vcr` | `true` | OSD видика (PLAY, часы, счётчик ленты, AUTO TRACKING) поверх пресетов со стадией `vhs` |
 | `audio.enabled` | `true` | Захват звука для реакции сцен |
 | `audio.sensitivity` | `1.0` | Чувствительность к звуку |
 | `audio.maxPulse` | `0.8` | Потолок вспышки `beatPulse` |

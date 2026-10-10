@@ -2,13 +2,14 @@
 
 // Проход 2: декодирование сигнала (tv_encode.frag) как в телевизоре, смешивание с исходником по amount.
 // NTSC и PAL: гребенчатый фильтр (яркость = сумма строк с противоположной фазой, цветность = разность).
-// SECAM: гребёнки нет, узкий ФНЧ яркости.
+// SECAM: модель по исходнику (uSrc), композит не используется: яркость с лёгким ФНЧ, цвет с асимметричным
+// ФНЧ по горизонтали и огрублением через строку, факелы и снег приёма по хешу.
 
 in vec2 vUv;
 out vec4 fragColor;
 
-uniform sampler2D uInput;     // композит: R = s, G = D (SECAM)
-uniform sampler2D uSrc;       // исходная картинка
+uniform sampler2D uInput;     // композит (PAL/NTSC): R = s
+uniform sampler2D uSrc;       // исходная картинка (SECAM читает её напрямую)
 uniform vec2 uResolution;
 uniform float uTime;
 uniform int uFrame;
@@ -17,23 +18,26 @@ uniform float p_mode;         // 0 = PAL, 1 = SECAM, 2 = NTSC
 uniform float p_amount;
 uniform float p_hue;          // градусы, только NTSC (Tint)
 uniform float p_sharpness;
+uniform float p_saturation;   // SECAM: насыщенность цвета
+uniform float p_fires;        // SECAM: количество факелов
+uniform float p_signal;       // SECAM: качество приёма (снег яркости, факелы от шума)
+uniform float p_edge;         // SECAM: зелёная кромка у левого края
 
 const float PI = 3.1415927;
 const float TAU = 6.2831853;
 const float SC_REF = 1920.0;
 const float NTSC_CYC = 188.0;
 const float PAL_CYC = 230.0;
-const float SECAM_CYC_DB = 221.0;
-const float SECAM_CYC_DR = 229.0;
-const float SIG_NARROW = 4.5;
-const float SIG_WIDE = 9.0;
-const float SECAM_LUMA_NOTCH = 0.135;        // сигма ФНЧ яркости SECAM в долях периода поднесущей (ядро ~0.6 периода)
+const float SIG_NARROW = 4.5;         // сигма узкого ядра, px при 1920
+const float SIG_WIDE = 9.0;           // сигма широкого ядра, px при 1920
 const float NTSC_DRIFT = 4.0 * PI / 180.0;   // внутренняя ошибка фазы NTSC, множитель amount
 const float PAL_ERR = 5.0 * PI / 180.0;      // внутренняя ошибка фазы PAL (линия задержки гасит её в насыщенность)
-const float SECAM_DEV = 1.2;
-const float SECAM_AMIN = 0.03;             // амплитуда на сером (как в tv_encode)
-const float SECAM_KEY_LO = 1.2 * SECAM_AMIN; // color killer: ниже этой огибающей цветность гаснет
-const float SECAM_KEY_HI = 2.0 * SECAM_AMIN;
+const float SECAM_SEG = 16.0;         // сегмент строки для факелов, px при 1920
+const int SECAM_SEG_N = 4;            // сегментов назад от пикселя (покрывает 64 px влево при 16 px сегментах)
+// ФНЧ цвета, px на 1280. Хвост ВЛЕВО от пикселя (d < 0, длинный): цвет из левых точек приезжает в пиксель,
+// то есть цвет течёт ВПРАВО от своего источника. Короткая сторона ВПРАВО от пикселя (d > 0).
+const float SECAM_CHROMA_TAIL = 12.0;
+const float SECAM_CHROMA_NEAR = 4.0;
 
 uint ihash(uint x) {
     x ^= x >> 16u;
@@ -53,20 +57,18 @@ float gw(int k) { return GWT[abs(k)]; }
 
 float scale() { return uResolution.x / SC_REF; }
 
+// Яркость Rec.601.
+float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+
 // Композит в строке ry (целая), позиция x в px.
 float sigAt(float x, int ry) {
     return texture(uInput, vec2(x / uResolution.x, (float(ry) + 0.5) / uResolution.y)).r;
 }
-float dAt(float x, int ry) {
-    return texture(uInput, vec2(x / uResolution.x, (float(ry) + 0.5) / uResolution.y)).g;
-}
 
-// Сигнал цветности для демодуляции: m = 2 (NTSC): разность с предыдущей строкой, m = 0 (PAL): с строкой n-2,
-// m = 1 (SECAM): сам композит. Разность гасит яркость и даёт s_n - s_{n-1} = 2C (фаза противоположна).
+// Сигнал цветности для демодуляции (PAL/NTSC): m = 2 (NTSC): разность с предыдущей строкой, m = 0 (PAL): с строкой n-2.
 float csig(float xp, int ry, int m) {
     if (m == 2) return 0.5 * (sigAt(xp, ry) - sigAt(xp, max(ry - 1, 0)));
-    if (m == 0) return 0.5 * (sigAt(xp, ry) - sigAt(xp, max(ry - 2, 0)));
-    return sigAt(xp, ry);
+    return 0.5 * (sigAt(xp, ry) - sigAt(xp, max(ry - 2, 0)));
 }
 
 // Гребенчатая яркость: сумма строк с противоположной фазой поднесущей, цветность сокращается.
@@ -117,48 +119,86 @@ float smoothNoise(float t) {
     return mix(hash1(int(i)), hash1(int(i) + 1), f);
 }
 
-// SECAM: D строки r = девиация фазы относительно несущей этой строки (Db или Dr).
-// Color killer: огибающая sqrt(C^2+S^2) = A(D); ниже порога цветность плавно гаснет.
-float secamD(float x, int r) {
-    bool ev = (r & 1) == 0;
-    float cyc = ev ? SECAM_CYC_DB : SECAM_CYC_DR;
-    float sg = SIG_WIDE * scale();
-    float c = demod(x, r, cyc, 0.0, sg, false, 1);
-    float s = demod(x, r, cyc, 0.0, sg, true, 1);
-    // c = A cos θ, s = -A sin θ
-    float env = length(vec2(c, s));
-    float key = smoothstep(SECAM_KEY_LO, SECAM_KEY_HI, env);
-    return key * atan(-s, c) / SECAM_DEV;
+// ---------- SECAM (по исходнику) ----------
+
+// Исходный цвет в пикселе (px, ry); координаты зажаты в кадр.
+vec3 srcRgb(float px, int ry) {
+    float xc = clamp(px, 0.0, uResolution.x - 1.0);
+    float yc = clamp(float(ry), 0.0, uResolution.y - 1.0);
+    return texture(uSrc, vec2((xc + 0.5) / uResolution.x, (yc + 0.5) / uResolution.y)).rgb;
 }
 
-// SECAM: (Db, Dr). Чётная строка даёт Db, нечётная Dr; вторая компонента берётся с соседней строки.
-vec2 secamChroma(float x, int row) {
-    int rp = max(row - 1, 0);
-    float own = secamD(x, row);
-    float prev = secamD(x, rp);
-    return ((row & 1) == 0) ? vec2(own, prev) : vec2(prev, own);
+// Яркость SECAM: лёгкий ФНЧ 0.25 / 0.5 / 0.25 по горизонтали.
+float secamLuma(float px, int row) {
+    return 0.25 * lum(srcRgb(px - 1.0, row)) + 0.5 * lum(srcRgb(px, row))
+         + 0.25 * lum(srcRgb(px + 1.0, row));
 }
 
-// SECAM-факелы: резкий край D слева от точки даёт цветной отрезок вправо, 10..60 px, с затуханием.
-vec2 fire(float x, int row) {
-    for (int d = 1; d <= 60; d++) {
-        float xe = x - float(d);
-        if (xe < 2.0) break;
-        float e = abs(dAt(xe + 1.0, row) - dAt(xe - 1.0, row));
-        if (e > 0.05) {
-            uint h = ihash(uint(row) * 0x9E3779B9u ^ uint(uFrame) * 0x85EBCA6Bu ^ uint(xe));
-            float r1 = rnd(h);
-            float r2 = rnd(ihash(h ^ 0x68E31DA4u));
-            float r3 = rnd(ihash(h ^ 0xB5297A4Du));
-            float len = 10.0 + 50.0 * r2;
-            if (r1 < 0.6 && float(d) < len) {
-                float w = exp(-float(d) / (len * 0.5)) * (0.4 + 0.6 * r3);
-                return w * secamChroma(xe - 4.0, row);
-            }
-            break;
-        }
+// Цветность (Cb, Cr) строки ry, ФНЧ по горизонтали: треугольное ядро, хвост влево 12 px, вправо 4 px (на 1280).
+// Левый (длинный) хвост даёт растекание цвета ВПРАВО от источника.
+vec2 chromaRow(float px, int ry) {
+    float s = uResolution.x / 1280.0;
+    int tail = int(SECAM_CHROMA_TAIL * s + 0.5);
+    int near = int(SECAM_CHROMA_NEAR * s + 0.5);
+    vec2 acc = vec2(0.0);
+    float ws = 0.0;
+    for (int d = -tail; d <= near; d++) {
+        float w = (d < 0) ? 1.0 - float(-d) / float(tail + 1) : 1.0 - float(d) / float(near + 1);
+        vec3 c = srcRgb(px + float(d), ry);
+        acc += w * vec2(-0.1687 * c.r - 0.3313 * c.g + 0.5 * c.b, 0.5 * c.r - 0.4187 * c.g - 0.0813 * c.b);
+        ws += w;
     }
-    return vec2(0.0);
+    return acc / ws;
+}
+
+// Огрубление через строку: строка L = floor(row / 2) (на 1080 это 2 px). На Db-строке (L чётна) Cb берётся с этой строки,
+// Cr с предыдущей; на Dr-строке наоборот.
+vec2 secamChroma(float px, int row) {
+    int L = row / 2;
+    int Lp = max(L - 1, 0);
+    vec2 now = chromaRow(px, 2 * L);
+    vec2 prev = chromaRow(px, 2 * Lp);
+    return ((L & 1) == 0) ? vec2(now.x, prev.y) : vec2(prev.x, now.y);
+}
+// Факелы по сегментам: строка L делится на сегменты по 16 px (масштаб по ширине). Для пикселя рассматриваются
+// его сегмент и 3 предыдущих. В сегменте 4 пробы края e_i = |Y(x) - Y(x-2)| (x = xs + 4i), x0 = максимум, e = максимум.
+// p = 0.05*fires*smoothstep(0.08, 0.3, e) + (Y0 < 0.25 ? 0.003*fires : 0) + (1-signal)*0.9; на Db-строках p втрое меньше.
+// Выпадение по хешу (сегмент, линия, кадр). Факел от x0 вправо: длина 10..60 px, амплитуда 0.25..0.45,
+// затухание exp(-3*(x-x0)/длина). Dr-строка добавляет Cr, Db-строка Cb.
+vec2 flares(float px, int L) {
+    vec2 acc = vec2(0.0);
+    bool dbLine = (L & 1) == 0;
+    float mul = dbLine ? (1.0 / 3.0) : 1.0;
+    int rowE = 2 * L;
+    float segW = floor(SECAM_SEG * uResolution.x / SC_REF + 0.5);
+    float step = max(1.0, floor(segW / 4.0));
+    float sIdx = floor(px / segW);
+    for (int k = 0; k < SECAM_SEG_N; k++) {
+        float s = sIdx - float(k);
+        if (s < 0.0) break;
+        float xs = s * segW;
+        float e = 0.0;
+        float x0 = xs;
+        for (int i = 0; i < 4; i++) {
+            float xi = xs + float(i) * step;
+            float ei = abs(lum(srcRgb(xi, rowE)) - lum(srcRgb(xi - 2.0, rowE)));
+            if (ei > e) { e = ei; x0 = xi; }
+        }
+        float y0 = lum(srcRgb(x0, rowE));
+        float p = 0.05 * p_fires * smoothstep(0.08, 0.3, e)
+                + (y0 < 0.25 ? 0.003 * p_fires : 0.0)
+                + (1.0 - p_signal) * 0.9;
+        p *= mul;
+        uint h = ihash(uint(s) * 0x9E3779B9u ^ uint(L) * 0x85EBCA6Bu ^ uint(uFrame) * 0xC2B2AE35u);
+        if (rnd(h) >= p) continue;
+        float len = 10.0 + 50.0 * rnd(ihash(h ^ 0x68E31DA4u));
+        float amp = 0.25 + 0.2 * rnd(ihash(h ^ 0xB5297A4Du));
+        float d = px - x0;
+        if (d < 0.0 || d >= len) continue;
+        float a = amp * exp(-3.0 * d / len);
+        if (dbLine) acc.x += a; else acc.y += a;
+    }
+    return clamp(acc, 0.0, 0.8);
 }
 
 void main() {
@@ -185,7 +225,6 @@ void main() {
                    y - 1.106 * i + 1.703 * q);
     } else if (m == 0) {
         // PAL: гребёнка по строкам n и n-2 (фаза сдвинута на π). Цветность: линия задержки, веса 1/4, 1/2, 1/4.
-        // Ошибка фазы одинакова для всех строк: V-перетечка уходит в знаки и взаимно гасится.
         float cyc = PAL_CYC;
         float P = W / cyc;
         float y1 = combY(x, row, 0);
@@ -207,25 +246,23 @@ void main() {
                    y - 0.395 * uu - 0.581 * vv,
                    y + 2.032 * uu);
     } else {
-        // SECAM: узкий ФНЧ яркости (ядро ~0.6 периода, без гребёнки), цвет из двух соседних строк, плюс факелы.
-        bool even = (row & 1) == 0;
-        float cyc = even ? SECAM_CYC_DB : SECAM_CYC_DR;
-        float P = W / cyc;
-        float y1 = lumaLP(x, row, P * SECAM_LUMA_NOTCH);
-        float y2 = lumaLP(x, row, P / 1.25);
-        float y = y1 + p_sharpness * (y1 - y2);
-        vec2 dc = secamChroma(x, row) + fire(x, row);
-        float b = y + dc.x / 1.505;
-        float r = y - dc.y / 1.902;
-        float g = (y - 0.299 * r - 0.114 * b) / 0.587;
-        // Выход вне гаммы: цветность уменьшается к яркости, яркость сохраняется (клип по каналам её поднимал бы).
-        vec3 cs = vec3(r, g, b) - vec3(y);
-        float k = 1.0;
-        for (int i = 0; i < 3; i++) {
-            if (y + cs[i] < 0.0) k = min(k, max(y, 0.0) / max(-cs[i], 1e-6));
-            if (y + cs[i] > 1.0) k = min(k, max(1.0 - y, 0.0) / max(cs[i], 1e-6));
-        }
-        col = vec3(y) + k * cs;
+        // SECAM: модель по исходнику. Яркость: ФНЧ и снег приёма; цвет: огрубление через строку, насыщенность,
+        // бледнение светлых мест (как на таблице), факелы поверх.
+        float px = floor(x);
+        int L = row / 2;
+        float y = secamLuma(px, row);
+        float snow = rnd(ihash(uint(px) * 0x27D4EB2Du ^ uint(row) * 0x165667B1u ^ uint(uFrame) * 0x9E3779B9u)) - 0.5;
+        y += (1.0 - p_signal) * 0.15 * snow;
+        vec2 cc = secamChroma(px, row) * p_saturation;
+        cc *= 1.0 - 0.35 * smoothstep(0.6, 1.0, y);
+        if (p_fires > 0.0 || p_signal < 1.0) cc += flares(px, L);
+        // Обратное преобразование Y, Cb, Cr в RGB (Cb = 0.564(B-Y), Cr = 0.713(R-Y)).
+        col = vec3(y + 1.402 * cc.y,
+                   y - 0.344 * cc.x - 0.714 * cc.y,
+                   y + 1.772 * cc.x);
+        // Зелёная кромка у левого края: демодулятор раскачивается с площадки гашения; дышит с периодом ~7 с.
+        float bell = 1.0 - smoothstep(0.004 * W, 0.012 * W, x);
+        col.g += p_edge * 0.5 * bell * (1.0 + 0.2 * sin(TAU * uTime / 7.0));
     }
 
     col = max(col, vec3(0.0));
