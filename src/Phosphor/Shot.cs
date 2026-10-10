@@ -37,7 +37,10 @@ internal static class Shot
         using var shared = new Shared(gl, config, scenes, Catalog.Filters(), overlays, data, new Random(args.Seed), log) { GridPasses = Catalog.GridPasses() };
 
         string sceneId = args.Scene ?? scenes.Ids.First();
-        string preset = args.Preset ?? config.Filters.Active;
+        // "shuffle" — стартовый пресет случайный из доступных (как в Program.BuildSlots); rng от seed — снимок детерминирован
+        string preset = args.Preset ?? (string.Equals(config.Filters.Active, FiltersConfig.ShuffleActive, StringComparison.OrdinalIgnoreCase)
+            ? Selection.Pick(Selection.PresetPool(config), new Random(args.Seed).NextDouble())
+            : config.Filters.Active);
 
         // Сцене с данными — дождаться их (кеш появляется сразу, сеть — до 25 с), чтобы снимок был с настоящими данными.
         if (scenes.Create(sceneId) is IDataScene ds)
@@ -62,6 +65,18 @@ internal static class Shot
         var clock = new DateTime(2026, 10, 9, 4, 20, 0);
         if (TimeOnly.TryParse(Environment.GetEnvironmentVariable("PHOSPHOR_SHOT_TIME"), System.Globalization.CultureInfo.InvariantCulture, out var shotTime))
             clock = DateOnly.FromDateTime(clock).ToDateTime(shotTime);
+
+        // Диммер: env PHOSPHOR_DIM_ELAPSED=<с> — прогресс как будто заставка работает столько секунд (Enabled — true, остальное из конфига).
+        // Только программное затемнение картинки; подсветку в снимке не трогаем. Конфиг в файл не пишется.
+        float dimGain = 1f;
+        if (double.TryParse(Environment.GetEnvironmentVariable("PHOSPHOR_DIM_ELAPSED"), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var dimElapsed))
+        {
+            config.Dimmer.Enabled = true;
+            float progress = DimmerCurve.Progress(config.Dimmer, dimElapsed);
+            dimGain = DimmerCurve.SoftwareGain(config.Dimmer, progress);
+            log.Info($"shot: диммер elapsed={dimElapsed:F1} с, прогресс {progress:F3}, gain {dimGain:F3}");
+        }
 
         const float dt = 1f / 60f;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -90,7 +105,7 @@ internal static class Shot
         double ms = sw.Elapsed.TotalMilliseconds / Math.Max(1, args.Frames);
 
         using var final = new RenderTarget(gl, args.Width, args.Height);
-        presenter.Draw(slot.Output, final.Fbo, 0, 0, args.Width, args.Height);
+        presenter.Draw(slot.Output, final.Fbo, 0, 0, args.Width, args.Height, dimGain);
 
         var px = new byte[args.Width * args.Height * 4];
         gl.BindFramebuffer(FramebufferTarget.Framebuffer, final.Fbo);

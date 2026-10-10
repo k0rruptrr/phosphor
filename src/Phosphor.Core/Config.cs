@@ -67,6 +67,10 @@ public sealed class PhosphorConfig
         Shuffle.TransitionSec = Math.Clamp(Shuffle.TransitionSec, 0, 10);
         Shuffle.FavoriteWeight = Math.Clamp(Shuffle.FavoriteWeight, 1f, 10f);
         Scenes.Speed = Math.Clamp(Scenes.Speed, 0.05f, 10f);
+        Dimmer.DelayMin = Math.Clamp(Dimmer.DelayMin, 0f, 240f);
+        Dimmer.FadeSec = Math.Clamp(Dimmer.FadeSec, 0f, 600f);
+        Dimmer.HardwareLevel = Math.Clamp(Dimmer.HardwareLevel, 0, 100);
+        Dimmer.SoftwareLevel = Math.Clamp(Dimmer.SoftwareLevel, 0f, 1f);
     }
 
     /// <summary>

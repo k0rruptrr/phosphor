@@ -2,16 +2,23 @@ using System.Globalization;
 
 namespace Phosphor.Platform;
 
-public enum LaunchMode { Screensaver, Preview, Configure, Windowed, Shot }
+public enum LaunchMode { Screensaver, Preview, Configure, Windowed, Shot, SettingsShot }
+
+/// <summary>Вкладки окна настроек (допустимые значения --tab).</summary>
+public static class SettingsTabs
+{
+    public static readonly string[] All = { "scenes", "filters", "shuffle", "dimmer", "network", "about" };
+}
 
 /// <summary>Разобранные аргументы командной строки. Формат — тот, с которым Windows вызывает .scr.</summary>
 public sealed class LaunchArgs
 {
     public LaunchMode Mode { get; init; }
     public nint ParentHwnd { get; init; }      // для Preview (обязателен) и Configure (может быть 0)
-    public string? ShotPath { get; init; }     // для Shot
-    public string? Scene { get; init; }        // --scene <id>, для Windowed и Shot
-    public string? Preset { get; init; }       // --preset <name>, для Windowed и Shot
+    public string? ShotPath { get; init; }     // для Shot и SettingsShot
+    public string? Scene { get; init; }        // --scene <id>, для Windowed, Shot и Preview
+    public string? Preset { get; init; }       // --preset <name>, для Windowed, Shot и Preview
+    public string? SettingsTab { get; init; }  // --tab <имя>, для SettingsShot (по умолчанию scenes)
     public int Frames { get; init; } = 120;    // --frames N, для Windowed и Shot
     public int Width { get; init; } = 1280;    // --size WxH
     public int Height { get; init; } = 720;
@@ -19,7 +26,8 @@ public sealed class LaunchArgs
 
     /// <summary>
     /// Разбор аргументов. Регистр флагов не важен. Ошибки — ArgumentException с текстом на русском.
-    /// Опции --scene/--preset/--frames/--size/--seed допустимы только с /w и --shot.
+    /// Опции --scene/--preset/--frames/--size/--seed допустимы только с /w и --shot (--scene/--preset ещё и с /p).
+    /// --tab — только с --settings-shot. Неизвестная вкладка — ошибка.
     /// </summary>
     public static LaunchArgs Parse(string[] args)
     {
@@ -37,7 +45,7 @@ public sealed class LaunchArgs
         int width = 1280;
         int height = 720;
         int seed = 1;
-        bool optionUsed = false;
+        string? tab = null;
         var seenOptions = new HashSet<string>(StringComparer.Ordinal);
 
         void SetMode(LaunchMode m)
@@ -51,7 +59,6 @@ public sealed class LaunchArgs
         {
             if (!seenOptions.Add(name))
                 throw new ArgumentException($"Опция {name} указана дважды.");
-            optionUsed = true;
         }
 
         for (int i = 0; i < args.Length; i++)
@@ -104,6 +111,18 @@ public sealed class LaunchArgs
                     shotPath = NextValue("--shot");
                     break;
 
+                case "--settings-shot":
+                    SetMode(LaunchMode.SettingsShot);
+                    shotPath = NextValue("--settings-shot");
+                    break;
+
+                case "--tab":
+                    Option("--tab");
+                    tab = NextValue("--tab").ToLowerInvariant();
+                    if (Array.IndexOf(SettingsTabs.All, tab) < 0)
+                        throw new ArgumentException($"Опция --tab: неизвестная вкладка '{tab}' (есть: {string.Join(", ", SettingsTabs.All)}).");
+                    break;
+
                 case "--scene":
                     Option("--scene");
                     scene = NextValue("--scene");
@@ -151,8 +170,13 @@ public sealed class LaunchArgs
         if (mode is null)
             throw new ArgumentException("Не указан режим: /s, /p, /c, /w или --shot.");
 
-        if (optionUsed && mode is not (LaunchMode.Windowed or LaunchMode.Shot))
-            throw new ArgumentException("Опции --scene, --preset, --frames, --size, --seed допустимы только с /w и --shot.");
+        foreach (var opt in seenOptions)
+        {
+            if (!OptionAllowed(mode.Value, opt))
+                throw new ArgumentException(mode.Value == LaunchMode.Preview || opt is "--tab"
+                    ? $"Опция {opt} здесь не допустима."
+                    : "Опции --scene, --preset, --frames, --size, --seed допустимы только с /w и --shot (--scene и --preset ещё с /p); --tab — только с --settings-shot.");
+        }
 
         if (mode == LaunchMode.Preview && parent == 0)
             throw new ArgumentException("/p требует ненулевой HWND родительского окна.");
@@ -164,12 +188,22 @@ public sealed class LaunchArgs
             ShotPath = shotPath,
             Scene = scene,
             Preset = preset,
+            SettingsTab = mode == LaunchMode.SettingsShot ? tab ?? "scenes" : null,
             Frames = frames,
             Width = width,
             Height = height,
             Seed = seed,
         };
     }
+
+    /// <summary>Какие опции допустимы в каком режиме.</summary>
+    private static bool OptionAllowed(LaunchMode mode, string opt) => mode switch
+    {
+        LaunchMode.Windowed or LaunchMode.Shot => opt is "--scene" or "--preset" or "--frames" or "--size" or "--seed",
+        LaunchMode.Preview => opt is "--scene" or "--preset",
+        LaunchMode.SettingsShot => opt is "--tab",
+        _ => false,
+    };
 
     private static bool TryParseHwnd(string text, out nint hwnd)
     {

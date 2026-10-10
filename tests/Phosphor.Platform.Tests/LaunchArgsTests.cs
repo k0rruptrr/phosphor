@@ -215,4 +215,74 @@ public class LaunchArgsTests
     {
         Assert.Throws<ArgumentNullException>(() => LaunchArgs.Parse(null!));
     }
+
+    [Fact]
+    public void PreviewWithSceneAndPreset_ParsesBoth()
+    {
+        var a = LaunchArgs.Parse(new[] { "/p", "12345", "--scene", "matrix", "--preset", "crt,vhs" });
+        Assert.Equal(LaunchMode.Preview, a.Mode);
+        Assert.Equal((nint)12345, a.ParentHwnd);
+        Assert.Equal("matrix", a.Scene);
+        Assert.Equal("crt,vhs", a.Preset);
+    }
+
+    [Fact]
+    public void PreviewWithFrames_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "/p", "1", "--frames", "10" }));
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "/p", "1", "--tab", "dimmer" }));
+    }
+
+    [Fact]
+    public void SettingsShot_ParsesPathAndDefaultsToScenesTab()
+    {
+        var a = LaunchArgs.Parse(new[] { "--settings-shot", "out.png" });
+        Assert.Equal(LaunchMode.SettingsShot, a.Mode);
+        Assert.Equal("out.png", a.ShotPath);
+        Assert.Equal("scenes", a.SettingsTab);
+    }
+
+    [Theory]
+    [InlineData("filters")]
+    [InlineData("SHUFFLE")]
+    [InlineData("dimmer")]
+    [InlineData("network")]
+    [InlineData("about")]
+    public void SettingsShot_TabIsCaseInsensitive(string tab)
+    {
+        var a = LaunchArgs.Parse(new[] { "--settings-shot", "x.png", "--tab", tab });
+        Assert.Equal(tab.ToLowerInvariant(), a.SettingsTab);
+    }
+
+    [Fact]
+    public void SettingsShot_UnknownTab_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "--settings-shot", "x.png", "--tab", "bogus" }));
+    }
+
+    [Fact]
+    public void SettingsShot_WithoutPath_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "--settings-shot" }));
+    }
+
+    [Fact]
+    public void TabWithoutSettingsShot_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "/w", "--tab", "scenes" }));
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "--shot", "a.png", "--tab", "scenes" }));
+    }
+
+    [Fact]
+    public void SceneOrPresetWithSettingsShot_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "--settings-shot", "x.png", "--scene", "matrix" }));
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "--settings-shot", "x.png", "--preset", "crt" }));
+    }
+
+    [Fact]
+    public void SettingsShotAndWindowed_AreTwoModes_Throw()
+    {
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "--settings-shot", "x.png", "/w" }));
+    }
 }

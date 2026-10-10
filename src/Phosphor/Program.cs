@@ -48,8 +48,9 @@ internal static class Program
 
             return args.Mode switch
             {
-                LaunchMode.Configure => Configure(cfgPath),
+                LaunchMode.Configure => Configure(args, config, cfgPath, log),
                 LaunchMode.Shot => Shot.Run(args, config, log),
+                LaunchMode.SettingsShot => Settings.SettingsForm.RenderShot(args.ShotPath!, args.SettingsTab ?? "scenes", config, Catalog.Scenes().Ids, log),
                 _ => RunInteractive(args, config, log),
             };
         }
@@ -63,11 +64,11 @@ internal static class Program
         }
     }
 
-    private static int Configure(string cfgPath)
+    /// <summary>/c[:HWND] — окно настроек (WinForms). HWND — владелец (модальность к панели управления).</summary>
+    private static int Configure(LaunchArgs args, PhosphorConfig config, string cfgPath, Log log)
     {
         if (!File.Exists(cfgPath)) File.WriteAllText(cfgPath, PhosphorConfig.DefaultJson);
-        int r = MessageBoxW(0, $"Окно настроек будет во второй версии.\nПока всё настраивается в файле:\n{cfgPath}\n\nОткрыть его?", "PHOSPHOR", 0x24);
-        if (r == 6) Process.Start(new ProcessStartInfo(cfgPath) { UseShellExecute = true });
+        Settings.SettingsForm.Open(config, Catalog.Scenes().Ids, cfgPath, args.ParentHwnd, log);
         return 0;
     }
 
@@ -100,6 +101,20 @@ internal static class Program
         var slots = BuildSlots(win, args, shared, cellH);
         // --scene / --preset в /w фиксируют сцену/пресет (разработка); в /s и /p дирижёр свободен.
         var director = new Director(shared, slots, lockScene: args.Scene is not null, lockPreset: args.Preset is not null);
+
+        // Диммер заставки (только /s): подсветка по DDC/CI там, где монитор отвечает; остальные — затемнение картинки.
+        // Журнал подсветки открываем и при выключенном диммере: если прошлый запуск упал с погашенным монитором, восстановим.
+        var dimmer = config.Dimmer;
+        string journalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Phosphor", "backlight-journal.json");
+        // Имена устройств в том же порядке, что и слоты (BuildSlots берёт Monitors.Enumerate в том же порядке)
+        var devNames = args.Mode == LaunchMode.Screensaver ? Monitors.Enumerate().Select(m => m.Name).ToArray() : Array.Empty<string>();
+        var gains = new float[slots.Count];
+        bool dimLogged = false, dimStarted = false;
+        // Dispose восстанавливает яркость: using — и при выходе, и при исключении.
+        using var backlight = args.Mode == LaunchMode.Screensaver && ((dimmer.Enabled && dimmer.Hardware) || File.Exists(journalPath))
+            ? Backlight.Start(journalPath, m => log.Info(m))
+            : null;
+
         // Превью в панели управления — без звука: незачем держать захват ради окошка 150×110.
         using var audio = config.Audio.Enabled && args.Mode != LaunchMode.Preview
             ? Phosphor.Audio.AudioService.Start(config.Audio, m => log.Info("audio: " + m))
@@ -147,11 +162,44 @@ internal static class Program
             for (int i = 0; i < slots.Count; i++)
                 slots[i].Tick(dt, (float)now, frame, af, director.OrganismFor(i, wall), slots.Count);
 
+            // Диммер: прогресс по времени заставки. Подсветка — заявки Request (только когда пора, progress > 0);
+            // мониторы без DDC — множитель картинки.
+            float dimProgress = args.Mode == LaunchMode.Screensaver ? DimmerCurve.Progress(dimmer, now) : 0f;
+            if (dimProgress > 0 && !dimStarted) { dimStarted = true; log.Info("диммер: гашу"); }
+            if (backlight is { Ready: true } bl && !dimLogged)
+            {
+                dimLogged = true;
+                var hw = new List<string>();
+                var soft = new List<string>();
+                for (int i = 0; i < slots.Count; i++)
+                {
+                    string dev = i < devNames.Length ? devNames[i] : "?";
+                    if (i < devNames.Length && bl.IsHardware(dev)) hw.Add(dev); else soft.Add(dev);
+                }
+                log.Info($"диммер: подсветка DDC — {(hw.Count == 0 ? "нет" : string.Join(", ", hw))}; затемнение картинки — {(soft.Count == 0 ? "нет" : string.Join(", ", soft))}");
+            }
+            float softGain = DimmerCurve.SoftwareGain(dimmer, dimProgress);
+            for (int i = 0; i < slots.Count; i++)
+            {
+                gains[i] = 1f;
+                string? dev = i < devNames.Length ? devNames[i] : null;
+                if (backlight is { Ready: true } hwBl && dev is not null && hwBl.IsHardware(dev))
+                {
+                    if (dimProgress > 0)
+                        hwBl.Request(dev, DimmerCurve.HardwareLevel(dimmer, OriginalLevel01(hwBl, dev), dimProgress));
+                }
+                else gains[i] = softGain;
+            }
+
             gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
             gl.Viewport(0, 0, (uint)win.ClientWidth, (uint)win.ClientHeight);
             gl.ClearColor(0, 0, 0, 1);
             gl.Clear(ClearBufferMask.ColorBufferBit);
-            foreach (var s in slots) presenter.Draw(s.Output, 0, s.VpX, s.VpY, s.VpW, s.VpH);
+            for (int i = 0; i < slots.Count; i++)
+            {
+                var s = slots[i];
+                presenter.Draw(s.Output, 0, s.VpX, s.VpY, s.VpW, s.VpH, gains[i]);
+            }
             win.SwapBuffers();
             frame++;
 
@@ -169,6 +217,15 @@ internal static class Program
         foreach (var s in slots) s.Dispose();
         log.Info("выход");
         return 0;
+    }
+
+    /// <summary>Исходная яркость монитора как доля диапазона [Min..Max], 0..1.</summary>
+    private static float OriginalLevel01(Backlight bl, string dev)
+    {
+        foreach (var m in bl.Monitors)
+            if (string.Equals(m.DeviceName, dev, StringComparison.OrdinalIgnoreCase))
+                return (m.Original - m.Min) / (float)(m.Max - m.Min);
+        return 0f;
     }
 
     private static List<MonitorSlot> BuildSlots(ScreensaverWindow win, LaunchArgs args, Shared s, int cellH)

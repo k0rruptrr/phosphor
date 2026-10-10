@@ -62,6 +62,7 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 | `PHOSPHOR_FAKE_BPM` | `128` | Синтетический бит; дирижёр меняет сцены по фразам |
 | `PHOSPHOR_OVERLAY` | `hud` | Включить оверлей в снимке |
 | `PHOSPHOR_SWITCH_AT` / `_TO` / `_KIND` | `120` / `plasma` / `vhsnoise` | Смена сцены на кадре N — проверка переходов (`_KIND`: fade, vhsnoise, glitch, cut) |
+| `PHOSPHOR_DIM_ELAPSED` | `99999` | Секунды работы заставки, на которые считать диммер в снимке (только затемнение картинки, подсветку не трогает) |
 
 ## Конфиг `phosphor.json`
 
@@ -101,6 +102,14 @@ dotnet tools\PreviewHost\bin\Release\net8.0-windows\PreviewHost.dll dist\Phospho
 | `network.news` | `["tass","bbc","reddit:worldnews"]` | Источники новостей, см. ниже |
 | `network.teletext` | `["svt","nos"]` | Каналы телетекста: `nos`, `svt` |
 | `exit.mouseThresholdPx` | `12` | Сколько пикселей движения мыши выключают заставку |
+| `dimmer.enabled` | `false` | Диммер: через `dimmer.delayMin` минут заставка плавно гасит мониторы |
+| `dimmer.delayMin` | `10` | Через сколько минут работы заставки начинать гасить, 0..240 |
+| `dimmer.fadeSec` | `60` | Длительность плавного затемнения, 0..600 с (0 — сразу) |
+| `dimmer.hardware` | `true` | Управлять подсветкой через DDC/CI там, где монитор отвечает |
+| `dimmer.hardwareLevel` | `0` | Целевая яркость подсветки, % диапазона монитора (0 — минимум), 0..100. Диммер не делает ярче исходного |
+| `dimmer.softwareLevel` | `0.25` | Множитель яркости картинки для мониторов без DDC, 0..1 (0 — чёрный экран) |
+
+Диммер (`dimmer.*`) работает только в заставке (`/s`). Мониторы с DDC/CI гаснут подсветкой, остальные — затемнением картинки. Исходная яркость подсветки восстанавливается при выходе; журнал `%LOCALAPPDATA%\Phosphor\backlight-journal.json` существует, пока яркость изменена, и если прошлый запуск упал, при следующем запуске яркость восстанавливается из него. Чужие изменения яркости (например, Twinkle Tray) не перезаписываются.
 
 Ключа `network` в текущем `phosphor.json` нет — действуют значения по умолчанию из таблицы.
 
