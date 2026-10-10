@@ -270,6 +270,8 @@ public sealed class NetworkConfig
     public List<string> Teletext { get; set; } = new() { "svt", "nos" };
     /// <summary>Спутниковые ленты по id: "meteosat" (EUMETSAT, Европа/РФ, 10 мин), "himawari" (весь диск, 10 мин), "viirs" (NASA, сутки).</summary>
     public List<string> Satellite { get; set; } = new() { "meteosat", "himawari", "viirs" };
+    /// <summary>Спутники для сцены «сат-ТВ» — id страниц KingOfSat (en.kingofsat.info/sat-&lt;id&gt;). Список по умолчанию задаёт Phosphor.Data (SatTvCatalog.DefaultIds), здесь пусто = он.</summary>
+    public List<string> SatTv { get; set; } = new();
     /// <summary>Координаты города (WGS84). Заданы — геокодер не нужен (например, когда его режет сеть/провайдер).
     /// null — берутся из геокодера, а при его недоступности из последнего кеша погоды.</summary>
     public double? Lat { get; set; }

@@ -114,3 +114,29 @@ public static class TeletextColors
         Rgba.Hex(0x0000FF), Rgba.Hex(0xFF00FF), Rgba.Hex(0x00FFFF), Rgba.Hex(0xFFFFFF),
     };
 }
+
+/// <summary>
+/// "sattv" — список каналов одного спутника (источник = спутник, данные KingOfSat, обновление раз в сутки).
+/// Несколько спутников хост сливает в SatTvSetSnapshot (SatTvCatalog.Merge в Phosphor.Data); сцена получает его.
+/// </summary>
+/// <param name="Id">id из конфига (network.satTv), например "astra1n".</param>
+/// <param name="Name">Имя спутника как на сайте: "Astra 1N".</param>
+/// <param name="Position">Орбитальная позиция: "19.2°E".</param>
+/// <param name="Channels">Только ТВ-каналы (без радио и data), по возрастанию частоты; не больше 400.</param>
+public sealed record SatTvSatellite(string Id, string Name, string Position, IReadOnlyList<SatTvChannel> Channels,
+    DateTimeOffset FetchedAt, bool FromCache) : DataSnapshot(FetchedAt, FromCache);
+
+/// <summary>Один канал.</summary>
+/// <param name="FreqMhz">Частота, МГц: 11214.25.</param>
+/// <param name="Pol">'H' | 'V' | 'L' | 'R'.</param>
+/// <param name="SymbolRate">Символьная скорость, kSym/s (27500), 0 — неизвестно.</param>
+/// <param name="Fec">"3/4", "" — неизвестно.</param>
+/// <param name="Standard">"DVB-S" | "DVB-S2" | "".</param>
+/// <param name="Country">Страна/язык как на сайте, коротко: "Germany", "Russia", "" — неизвестно.</param>
+/// <param name="Fta">Открытый канал (Free To Air).</param>
+public sealed record SatTvChannel(string Name, double FreqMhz, char Pol, int SymbolRate, string Fec, string Standard,
+    string Country, bool Fta);
+
+/// <summary>"sattv" после слияния — спутники с непустыми списками, в порядке конфига.</summary>
+public sealed record SatTvSetSnapshot(IReadOnlyList<SatTvSatellite> Satellites, DateTimeOffset FetchedAt, bool FromCache)
+    : DataSnapshot(FetchedAt, FromCache);
