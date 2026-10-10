@@ -15,6 +15,7 @@ public sealed class PhosphorConfig
     public NetworkConfig Network { get; set; } = new();
     public OverlayConfig Overlay { get; set; } = new();
     public DimmerConfig Dimmer { get; set; } = new();
+    public ScreenConfig Screen { get; set; } = new();
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -176,6 +177,7 @@ public sealed class PhosphorConfig
       "overlay": { "enabled": true, "id": "hud", "probability": 0.4, "vcr": true },
       "audio": { "enabled": true, "sensitivity": 1.0, "maxPulse": 0.8, "minBeatIntervalMs": 250 },
       "network": { "enabled": true, "city": "Москва", "news": ["nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc"], "calmNews": true, "teletext": ["svt", "nos"], "satellite": ["meteosat", "himawari", "viirs"] },
+      "screen": { "trail": 0 },
       "dimmer": { "enabled": false, "delayMin": 10, "fadeSec": 60, "hardware": true, "hardwareLevel": 0, "softwareLevel": 0.25 },
       "exit": { "mouseThresholdPx": 12 }
     }
@@ -295,6 +297,13 @@ public sealed class DimmerConfig
     public int HardwareLevel { get; set; } = 0;
     /// <summary>Множитель яркости картинки для мониторов без DDC, 0..1 (0 — чёрный экран).</summary>
     public float SoftwareLevel { get; set; } = 0.25f;
+}
+
+/// <summary>Общее для экрана поверх любой сцены и пресета.</summary>
+public sealed class ScreenConfig
+{
+    /// <summary>Шлейф (моушн-блюр): доля предыдущего кадра в текущем, 0 = выкл, до 0.9.</summary>
+    public float Trail { get; set; } = 0f;
 }
 
 public sealed class ExitConfig
