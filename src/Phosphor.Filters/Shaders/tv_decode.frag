@@ -22,7 +22,10 @@ uniform float p_saturation;   // SECAM: насыщенность цвета
 uniform float p_fires;        // SECAM: количество факелов
 uniform float p_fireSize;     // SECAM: длина и яркость факелов (1 = как было)
 uniform float p_signal;       // SECAM: качество приёма (снег яркости, факелы от шума)
-uniform float p_edge;         // SECAM: сигналы опознавания (полоса) сверху кадра
+uniform float p_edge;         // SECAM: края гашения (светлая палка слева, тёмная цветная кромка справа)
+uniform float p_bottles;      // SECAM: сигналы опознавания («бутылки») сверху кадра
+uniform float p_ghost;        // двоение (эфир): отражённая копия правее контуров
+uniform float p_ghostDelay;   // задержка отражения, доля ширины кадра
 
 const float PI = 3.1415927;
 const float TAU = 6.2831853;
@@ -121,6 +124,9 @@ float smoothNoise(float t) {
     return mix(hash1(int(i)), hash1(int(i) + 1), f);
 }
 
+// Фаза строчного шума: своя на строку, сдвигается ~2.5 раза в секунду (целые скачки времени).
+float rowPh(int r) { return rnd(ihash(uint(r) * 0x9E3779B9u ^ 0x51ED27u)) * 97.0 + floor(uTime * 2.5) * 13.7; }
+
 // ---------- SECAM (по исходнику) ----------
 
 // Исходный цвет в пикселе (px, ry); координаты зажаты в кадр.
@@ -176,7 +182,7 @@ vec2 flares(float px, int L) {
     float segW = floor(SECAM_SEG * uResolution.x / SC_REF + 0.5);
     float step = max(1.0, floor(segW / 4.0));
     float sIdx = floor(px / segW);
-    float lenMax = FLARE_LEN_MAX * p_fireSize;
+    float lenMax = 3.0 * FLARE_LEN_MAX * p_fireSize;   // тёмные штрихи до ×3 длиннее
     for (int k = 0; k < SECAM_SEG_MAX; k++) {
         if (float(k) * segW >= lenMax) break;
         float s = sIdx - float(k);
@@ -190,20 +196,67 @@ vec2 flares(float px, int L) {
             if (ei > e) { e = ei; x0 = xi; }
         }
         float y0 = lum(srcRgb(x0, rowE));
-        float p = 0.05 * p_fires * smoothstep(0.08, 0.3, e)
-                + (y0 < 0.25 ? 0.003 * p_fires : 0.0)
-                + (1.0 - p_signal) * 0.9;
-        p *= mul;
-        uint h = ihash(uint(s) * 0x9E3779B9u ^ uint(L) * 0x85EBCA6Bu ^ uint(uFrame) * 0xC2B2AE35u);
-        if (rnd(h) >= p) continue;
-        float len = (10.0 + 50.0 * rnd(ihash(h ^ 0x68E31DA4u))) * p_fireSize;
-        float amp = (0.25 + 0.2 * rnd(ihash(h ^ 0xB5297A4Du))) * (0.8 + 0.2 * p_fireSize);
         float d = px - x0;
-        if (d < 0.0 || d >= len) continue;
-        float a = amp * exp(-3.0 * d / len);
-        if (dbLine) acc.x += a; else acc.y += a;
+        uint h = ihash(uint(s) * 0x9E3779B9u ^ uint(L) * 0x85EBCA6Bu ^ uint(uFrame) * 0xC2B2AE35u);
+        // Три члена вероятности, один бросок rnd(h) делит их по накопленным порогам. Каждый со своими правилами:
+        // (1) контур: 0.05·fires·smoothstep(e), знак + (Dr → Cr+, Db → Cb+), Db ×1/3, длина ×fireSize;
+        // (2) слабый сигнал: (1 − signal)·0.9, знак +, Db ×1/3, длина ×fireSize (как до T4);
+        // (3) тёмный: (y0 < 0.25) ? 0.003·fires : 0, канал по строке, случайный знак, без ×1/3, длина ×3·fireSize.
+        float pC = 0.05 * p_fires * smoothstep(0.08, 0.3, e) * mul;
+        float pS = (1.0 - p_signal) * 0.9 * mul;
+        float pD = (y0 < 0.25 ? 0.003 * p_fires : 0.0);
+        float r = rnd(h);
+        if (r < pC + pS + pD) {
+            bool dark = r >= pC + pS;
+            float len = (10.0 + 50.0 * rnd(ihash(h ^ 0x68E31DA4u))) * p_fireSize;
+            float amp = (0.25 + 0.2 * rnd(ihash(h ^ 0xB5297A4Du))) * (0.8 + 0.2 * p_fireSize);
+            if (dark) {
+                len *= 3.0;
+                amp = (0.08 + 0.17 * rnd(ihash(h ^ 0xB5297A4Du))) * (0.8 + 0.2 * p_fireSize);
+            }
+            if (d >= 0.0 && d < len) {
+                float a = amp * exp(-3.0 * d / len);
+                if (dark) {
+                    float sgn = ((ihash(h ^ 0x2545F491u) & 1u) == 0u) ? 1.0 : -1.0;
+                    if (dbLine) acc.x += a * sgn; else acc.y += a * sgn;
+                } else if (dbLine) acc.x += a; else acc.y += a;
+            }
+        }
     }
-    return clamp(acc, 0.0, 0.8);
+    return clamp(acc, -0.8, 0.8);
+}
+
+// Бутылки сигналов опознавания: хеш номера бутылки задаёт длину и промежутки (постоянны во времени).
+float bottleRnd(int i, uint salt) { return rnd(ihash(uint(i + 1) * 0x9E3779B9u ^ salt)); }
+
+// Бутылки полосы в точке xf (доля ширины кадра): возвращает (яркость, толщина). Фон между ними — 4% яркости тела.
+vec2 bottleAt(float xf) {
+    int nB = 3 + int(bottleRnd(7, 0x5Cu) * 3.0);     // 3..5 бутылок
+    float cur = 0.03;
+    for (int i = 0; i < 5; i++) {
+        if (i >= nB) break;
+        float len = 0.14 + 0.12 * bottleRnd(i, 0xA1u);  // длина 14–26% ширины
+        float u = (xf - cur) / len;
+        if (u >= 0.0 && u < 1.0) {
+            // подъём 10%, тело, горлышко последние 30% (яркость и толщина падают), плавный спад в конце
+            float env = smoothstep(0.0, 0.10, u) * (1.0 - smoothstep(0.92, 1.0, u));
+            float neckT = smoothstep(0.70, 1.0, u);
+            return vec2(max(0.04, env * mix(1.0, 0.5, neckT)), mix(1.0, 0.35, neckT));
+        }
+        cur += len + 0.06 + 0.06 * bottleRnd(i, 0xB7u);  // промежуток 6–12%
+    }
+    return vec2(0.04, 1.0);
+}
+
+// Эхо: blur3 по x исходника в точке xp, цветность ×0.5 (смесь с яркостью).
+vec3 echoAt(float xp, float v) {
+    vec3 acc = vec3(0.0);
+    for (int k = -1; k <= 1; k++) {
+        float xc = clamp(xp + float(k), 0.0, uResolution.x - 1.0);
+        acc += texture(uSrc, vec2((xc + 0.5) / uResolution.x, v)).rgb;
+    }
+    vec3 m = acc / 3.0;
+    return mix(vec3(lum(m)), m, 0.5);
 }
 
 void main() {
@@ -258,27 +311,100 @@ void main() {
         float y = secamLuma(px, row);
         float snow = rnd(ihash(uint(px) * 0x27D4EB2Du ^ uint(row) * 0x165667B1u ^ uint(uFrame) * 0x9E3779B9u)) - 0.5;
         y += (1.0 - p_signal) * 0.15 * snow;
+        // Строчный шум («волокна»): вдоль строки ~200 px, независим между строками; на тёмном поле ещё и цветной.
+        float fib = smoothNoise(px / 200.0 + rowPh(row));
+        float fib2 = smoothNoise(px / 200.0 + rowPh(row) + 50.0);
+        float dk = 1.0 - smoothstep(0.1, 0.2, y);   // тёмные места (luma < 0.2)
+        // Амплитуда волокон зависит от цвета поля: зелёный ×1.6, красный ×1.0, синий ×0.6 (плавно по долям каналов).
+        vec3 sc = srcRgb(px, row);
+        float tot = max(sc.r + sc.g + sc.b, 0.05);
+        float kf = 1.0 + 0.6 * sc.g / tot - 0.4 * sc.b / tot;
+        y += kf * (0.025 * fib + dk * 0.02 * fib2);
+        // Редкие выпадения: в среднем 1.5 на кадр, белые чёрточки 8–30 px.
+        uint dh = ihash(uint(row) * 0x85EBCA6Bu ^ uint(uFrame) * 0xC2B2AE35u ^ 0x3B9AC9u);
+        if (rnd(dh) < 1.5 / uResolution.y) {
+            float dx0 = rnd(ihash(dh ^ 0x68E31DA4u)) * W;
+            float dlen = 8.0 + 22.0 * rnd(ihash(dh ^ 0xB5297A4Du));
+            if (px >= dx0 && px < dx0 + dlen) y += 0.6;
+        }
         vec2 cc = secamChroma(px, row) * p_saturation;
         cc *= 1.0 - 0.35 * smoothstep(0.6, 1.0, y);
+        cc += dk * 0.03 * vec2(-0.6, -1.0) * (0.5 + 0.5 * fib2);   // тёмное поле: зеленоватый сдвиг цветности
         if (p_fires > 0.0 || p_signal < 1.0) cc += flares(px, L);
         // Обратное преобразование Y, Cb, Cr в RGB (Cb = 0.564(B-Y), Cr = 0.713(R-Y)).
         col = vec3(y + 1.402 * cc.y,
                    y - 0.344 * cc.x - 0.714 * cc.y,
                    y + 1.772 * cc.x);
-        // Сигналы опознавания (бутылки) сверху кадра: полоса высотой 1.4% кадра, нижний край размыт на 3.5 px (на 1080),
-        // полоса дышит с периодом ~7 с и дрожит по высоте на 1–2 px. Строки чередуются: Db чуть голубее, Dr чуть желтее.
+        // Тёмное поле: зеленоватый подъём чёрного. Хвост цвета за ярким текстом: зелёно-жёлтый мазок вправо, затухает
+        // (только там, где справа темнее, чем слева; на ровном поле нуля нет).
+        col += dk * vec3(0.015, 0.045, 0.025);
+        float l0 = lum(srcRgb(px, row));
+        float sm = 0.0;
+        float sw = 0.0;
+        for (int k = 1; k <= 8; k++) {
+            float dd = float(k) * 25.0 * sg;
+            float w = exp(-dd / (80.0 * sg));
+            sm += w * max(0.0, lum(srcRgb(px - dd, row)) - l0);
+            sw += w;
+        }
+        // Хвост = сдвиг цветности в противоположную сторону от фона (на чёрном — зеленоватый базовый сдвиг).
+        // Хвост относится к семейству факелов: включён тем же условием (fires/signal).
+        if (p_fires > 0.0 || p_signal < 1.0) {
+            // Цветность фона, повёрнутая по оттенку на −120° (cos = −0.5, sin = −0.866), плюс небольшой зелёный базис.
+            vec2 rc = vec2(-0.5 * cc.x + 0.8660254 * cc.y, -0.8660254 * cc.x - 0.5 * cc.y);
+            vec2 tail = 0.5 * (sm / sw) * (rc + vec2(-0.05, -0.08));
+            col += vec3(1.402 * tail.y, -0.344 * tail.x - 0.714 * tail.y, 1.772 * tail.x);
+        }
+        // Края гашения (управляет p_edge; gate = clamp(2·edge, 0, 1), так что edge = 0 — выкл).
+        // Левая палка: светлая линия ~1.5% ширины, ядро 0.25% ширины, рваная (сдвиг строки ±3 px, медленно по времени),
+        // блоки по 6 строк пропадают, блоки по 8 строк — ярче (0.9). Правая кромка: последние 1% ширины тёмная, рваная ±2 px,
+        // в ней короткие цветные чёрточки 0.15–0.35 (синие, зелёные, пурпурные).
+        float gEdge = clamp(p_edge * 2.0, 0.0, 1.0);
+        uint tk = uint(floor(uTime * 2.0));
+        float jitL = 3.0 * smoothNoise(float(row) * 0.7 + uTime * 0.3);
+        float dLft = abs(px + 0.5 - (0.015 * W + jitL));
+        float hw = 0.00125 * W;
+        float prof = 1.0 - smoothstep(hw - 0.4, hw + 2.6, dLft);
+        float gapOn = step(0.12, rnd(ihash(uint(row / 6) * 0x9E3779B9u ^ tk * 0x85EBCA6Bu ^ 0x7A3D1Fu)));
+        float brightBlk = step(0.88, rnd(ihash(uint(row / 8) * 0x27D4EB2Du ^ tk * 0x165667B1u ^ 0x1B873593u)));
+        float lineAmt = gEdge * prof * gapOn * mix(0.55, 0.9, brightBlk);
+        col += vec3(lineAmt);
+        float edgeR = W * 0.99 + 2.0 * smoothNoise(float(row) * 0.8 + uTime * 0.3);
+        uint rh = ihash(uint(row) * 0x9E3779B9u ^ tk * 0x85EBCA6Bu ^ 0x51ED27u);
+        float dashOn = step(0.65, rnd(rh));
+        float ds = W * (0.975 + 0.02 * rnd(ihash(rh ^ 0x68E31DA4u)));
+        float dl = 6.0 + 14.0 * rnd(ihash(rh ^ 0xB5297A4Du));
+        float inD = step(ds, x) * step(x, ds + dl);
+        float cr3 = rnd(ihash(rh ^ 0x2545F491u));
+        vec3 dc = cr3 < 0.33 ? vec3(0.2, 0.45, 1.0) : (cr3 < 0.66 ? vec3(0.2, 1.0, 0.3) : vec3(0.9, 0.2, 0.9));
+        col += gEdge * dashOn * inD * (0.15 + 0.2 * rnd(ihash(rh ^ 0x1B873593u))) * dc;
+        col = mix(col, vec3(0.01, 0.015, 0.01), gEdge * smoothstep(edgeR - 0.5, edgeR + 0.5, x));
+        // Сигналы опознавания (бутылки) сверху кадра (управляет p_bottles): полоса высотой 2.8% кадра, 3–5 бутылок по ширине.
+        // Строка дрожит по x (строчная синхронизация), яркость строки ×(0.85..1.15). Нижний край размыт на 3.5 px (на 1080),
+        // полоса дышит с периодом ~7 с и дрожит по высоте на 1–2 px. Строки чередуются: Db и Dr с малым контрастом.
         float yTop = (1.0 - vUv.y) * uResolution.y;
         float sy = uResolution.y / 1080.0;
-        float bandH = 0.014 * uResolution.y + 1.5 * sy * smoothNoise(uTime * 0.5);
-        float bandMask = 1.0 - smoothstep(bandH - 3.5 * sy, bandH, yTop);
+        float bandH = 0.028 * uResolution.y + 1.5 * sy * smoothNoise(uTime * 0.5);
+        float jit = 0.006 * W * smoothNoise(float(row) * 0.8 + uTime * 0.7);
+        vec2 bp = bottleAt((x - jit) / W);
+        float rowB = 1.0 + 0.15 * smoothNoise(float(row) * 0.8 + 31.7);
+        float ht = bandH * bp.y;
+        float bandMask = 1.0 - smoothstep(ht - 3.5 * sy * bp.y, ht, yTop);
         float breath = 1.0 + 0.2 * sin(TAU * uTime / 7.0);
-        float bandAmt = p_edge * 0.5 * breath * bandMask;
+        float bandAmt = p_bottles * 0.6 * breath * rowB * bp.x * bandMask;
         bool bandDb = (row & 1) == 0;
-        col += bandAmt * (bandDb ? vec3(0.0, 1.0, 0.35) : vec3(0.35, 1.0, 0.0));
+        col += bandAmt * (bandDb ? vec3(0.0875, 1.0, 0.2625) : vec3(0.2625, 1.0, 0.0875));
     }
 
     col = max(col, vec3(0.0));
     vec3 src = texture(uSrc, vUv).rgb;
     vec3 outc = mix(src, col, p_amount);
+    // Двоение (эфир): отражённая копия правее контуров. Эхо берётся с исходника (blur3), цветность эха ×0.5,
+    // второе эхо слабое и тёмное. a = ghost·0.35·(1 + 0.2·sin(2πt/11)), всё ×amount.
+    float ga = p_ghost * 0.35 * (1.0 + 0.2 * sin(TAU * uTime / 11.0)) * p_amount;
+    if (ga > 0.0) {
+        float dG = p_ghostDelay * W;
+        outc = outc * (1.0 - 0.5 * ga) + ga * (echoAt(x - dG, vUv.y) - 0.4 * echoAt(x - 2.3 * dG, vUv.y));
+    }
     fragColor = vec4(max(outc, vec3(0.0)), 1.0);
 }

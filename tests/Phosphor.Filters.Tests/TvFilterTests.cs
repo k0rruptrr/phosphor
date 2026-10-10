@@ -42,8 +42,12 @@ public class TvFilterTests
     public void Params_NamesDefaultsAndOptions()
     {
         var ps = new TvFilter().Params;
-        Assert.Equal(new[] { "mode", "amount", "hue", "sharpness", "saturation", "fires", "fireSize", "signal", "edge" },
+        Assert.Equal(new[] { "mode", "amount", "hue", "sharpness", "saturation", "fires", "fireSize", "signal", "edge", "bottles", "ghost", "ghostDelay" },
             ps.Select(p => p.Name).ToArray());
+        Assert.Equal(0.25f, ps[10].Default);   // T5: двоение (эфир), по умолчанию 0.25
+        Assert.Equal(0.02f, ps[11].Default);   // T5: сдвиг двоения, по умолчанию 0.02
+        Assert.Equal(0.5f, ps[8].Default);   // T4: edge = края гашения, по умолчанию 0.5
+        Assert.Equal(0f, ps[9].Default);     // T4: бутылки сверху выключены по умолчанию
         Assert.Equal(1f, ps[6].Default);
         Assert.Equal(0.3f, ps[6].Min);
         Assert.Equal(2.5f, ps[6].Max);
@@ -375,8 +379,8 @@ public class TvFilterTests
         return MathF.Sqrt(cb * cb + cr * cr);
     }
 
-    private static Dictionary<string, float> Secam(float signal = 1f, float fires = 0f, float edge = 0f) =>
-        new() { ["mode"] = ModeSecam, ["amount"] = 1f, ["signal"] = signal, ["fires"] = fires, ["edge"] = edge };
+    private static Dictionary<string, float> Secam(float signal = 1f, float fires = 0f, float edge = 0f, float bottles = 0f) =>
+        new() { ["mode"] = ModeSecam, ["amount"] = 1f, ["signal"] = signal, ["fires"] = fires, ["edge"] = edge, ["bottles"] = bottles };
 
     [Fact]
     public void Secam_AchromaticGlyphs_NoRainbow()
@@ -580,12 +584,12 @@ public class TvFilterTests
         // ИЗМЕНЕНИЕ ТРЕБОВАНИЯ (T2): зелёная полоса перенесена с левого края на ВЕРХНИЙ край кадра
         // (сигналы опознавания, «бутылки», из кадрового гасящего импульса). Прежний тест
         // Secam_EdgeBand_GreenAtLeftEdge (вертикальная кромка слева) удалён как отражающий старое требование.
-        // Полоса 1.4% высоты: на общем харнессе H = 64 это меньше строки, поэтому тест берёт кадр 1920x1080.
+        // Полоса 2.8% высоты (T3: было 1.4%): на общем харнессе H = 64 это меньше строки, поэтому тест берёт кадр 1920x1080.
         const int HB = 1080;
         using var gpu = new GpuHarness(W, HB);
         gpu.SetInput((x, y) => (0f, 0f, 0f));
         using var f = gpu.Create<TvFilter>();
-        int bandRows = (int)(0.014 * HB);
+        int bandRows = (int)(0.028 * HB);
 
         float[] MeanRgb(float[,,] img, int y0, int y1, int x0, int x1)
         {
@@ -599,20 +603,394 @@ public class TvFilterTests
             return new[] { m[0] / n, m[1] / n, m[2] / n };
         }
 
-        // Полоса: верхние 1.4% высоты кадра (строка 0 — верх).
-        var on = gpu.Run(f, 0, Secam(edge: 1f));
+        // Полоса: верхние 2.8% высоты кадра (строка 0 — верх). T3: высота полосы 1.4% → 2.8%, bandRows 15 → 30.
+        // T4 (решение пользователя): полоса теперь «бутылки» (bottles=1, по умолчанию выкл). Чёрное поле стало
+        // зеленоватым по требованию, поэтому проверку «слева под полосой нет зелёного» снята; «без полосы» — сравнение
+        // с bottles=0 на том же кадре: полоса должна добавлять зелёный заметно (> 0.05).
+        var on = gpu.Run(f, 0, Secam(bottles: 1f));
         var top = MeanRgb(on, 0, bandRows, 0, W);
         Assert.True(top[1] - MathF.Max(top[0], top[2]) >= 0.05f,
             $"полоса сверху: G {top[1]:F3}, R {top[0]:F3}, B {top[2]:F3}");
 
-        // Левый край ниже полосы: зелёного нет (вертикальной кромки больше нет).
-        var left = MeanRgb(on, HB / 10, HB * 9 / 10, 0, (int)(0.01 * W));
-        Assert.True(left[1] - MathF.Max(left[0], left[2]) < 0.02f,
-            $"слева под полосой G {left[1]:F3}, R {left[0]:F3}, B {left[2]:F3}");
+        var off = MeanRgb(gpu.Run(f, 0, Secam(bottles: 0f)), 0, bandRows, 0, W);
+        Assert.True((top[1] - MathF.Max(top[0], top[2])) - (off[1] - MathF.Max(off[0], off[2])) > 0.05f,
+            $"полоса не добавляет зелёного: вкл G {top[1]:F3}/R {top[0]:F3}/B {top[2]:F3}, выкл G {off[1]:F3}/R {off[0]:F3}/B {off[2]:F3}");
+    }
 
-        // edge=0: полосы нет.
-        var off = MeanRgb(gpu.Run(f, 0, Secam(edge: 0f)), 0, bandRows, 0, W);
-        Assert.True(off[1] - MathF.Max(off[0], off[2]) < 0.02f, $"без полосы G {off[1]:F3}");
+    // ---------- Бутылки сигналов опознавания (T3) ----------
+    // Полоса на кадре 1920x1080, edge=1, чёрный вход. Зелёный канал G = яркость бутылки (у Db/Dr G одинаков).
+
+    private static float[,,] BottleFrame(GpuHarness gpu, TvFilter f)
+    {
+        gpu.SetInput((x, y) => (0f, 0f, 0f));
+        return gpu.Run(f, 0, Secam(bottles: 1f));
+    }
+
+    [Fact]
+    public void Secam_EdgeBand_ThreeToFiveBottles()
+    {
+        // Средняя строка полосы: отдельные яркие участки (G > 0.1, длиннее 5% ширины) — от 3 до 5,
+        // самый длинный ≥ 12% ширины. Раньше полоса была сплошной: один участок на всю ширину.
+        const int HB = 1080;
+        using var gpu = new GpuHarness(W, HB);
+        using var f = gpu.Create<TvFilter>();
+        var img = BottleFrame(gpu, f);
+        int bandRows = (int)(0.028 * HB);
+        int mid = bandRows / 2;
+
+        var runs = new List<int>();
+        int run = 0;
+        for (int x = 0; x < W; x++)
+        {
+            if (img[mid, x, 1] > 0.1f) run++;
+            else { if (run > 0) runs.Add(run); run = 0; }
+        }
+        if (run > 0) runs.Add(run);
+        var bottles = runs.Where(r => r > 0.05 * W).ToList();
+
+        Assert.True(bottles.Count >= 3 && bottles.Count <= 5, $"ярких участков {bottles.Count}: {string.Join(",", bottles)}");
+        Assert.True(bottles.Max() >= 0.12 * W, $"самый длинный участок {bottles.Max()} px");
+    }
+
+    [Fact]
+    public void Secam_EdgeBand_LeftEdgeIsNotRuledLine()
+    {
+        // Аналоговость: левый край первой бутылки по строкам полосы гуляет, стандартное отклонение ≥ 1 px.
+        const int HB = 1080;
+        using var gpu = new GpuHarness(W, HB);
+        using var f = gpu.Create<TvFilter>();
+        var img = BottleFrame(gpu, f);
+        int bandRows = (int)(0.028 * HB);
+        // Нижние строки полосы — мягкий край (маска гаснет у bandH), там бутылки слабее порога; берём полностью яркие строки.
+        int litRows = (int)(0.6 * bandRows);
+
+        var xs = new List<double>();
+        for (int y = 0; y < litRows; y++)
+        {
+            int x0 = -1;
+            for (int x = 0; x < W / 2; x++)
+                if (img[y, x, 1] > 0.1f) { x0 = x; break; }
+            Assert.True(x0 >= 0, $"в строке {y} нет первой бутылки");
+            xs.Add(x0);
+        }
+        double mean = xs.Average();
+        double sd = Math.Sqrt(xs.Sum(v => (v - mean) * (v - mean)) / xs.Count);
+        Assert.True(sd >= 1.0, $"стандартное отклонение левого края {sd:F2} px");
+    }
+
+    [Fact]
+    public void Secam_EdgeBand_NeckIsThinnerThanBody()
+    {
+        // Горлышко у правого конца бутылки: светящаяся высота меньше, чем в середине тела.
+        const int HB = 1080;
+        using var gpu = new GpuHarness(W, HB);
+        using var f = gpu.Create<TvFilter>();
+        var img = BottleFrame(gpu, f);
+        int bandRows = (int)(0.028 * HB);
+
+        // Первый яркий участок в верхней строке полосы (она лежит внутри полосы при любом дыхании/дрожании).
+        int a = -1, b = -1;
+        for (int x = 0; x < W; x++)
+        {
+            if (img[0, x, 1] > 0.1f) { if (a < 0) a = x; }
+            else if (a >= 0) { b = x; break; }
+        }
+        Assert.True(a >= 0 && b > a && b - a >= 0.05 * W, $"нет бутылки: a={a}, b={b}");
+
+        int litRows = (int)(0.6 * bandRows);
+        int Height(int x)
+        {
+            int h = 0;
+            for (int y = 0; y < litRows; y++) if (img[y, x, 1] > 0.1f) h++;
+            return h;
+        }
+        int body = Height(a + (int)(0.4 * (b - a)));
+        int neck = Height(a + (int)(0.9 * (b - a)));
+        Assert.True(neck < body, $"высота горлышка {neck} px, высота тела {body} px");
+    }
+
+    // ---------- T4: SECAM как на референсе VHS-дубляжа (чёрный, штрихи, хвост, ровные поля) ----------
+
+    private static double StdDev(IEnumerable<double> v)
+    {
+        var a = v.ToArray();
+        double m = a.Average();
+        return Math.Sqrt(a.Sum(t => (t - m) * (t - m)) / a.Length);
+    }
+
+    [Fact]
+    public void Secam_Black_GreenishLiftAndFiberRows()
+    {
+        // Чёрное поле: зеленоватое, G в диапазоне 6..20/255; вдоль строки (200 px) шум слабее, чем поперёк (между строками).
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0f, 0f, 0f));
+        using var f = gpu.Create<TvFilter>();
+        var img = gpu.Run(f, 0, Mode(ModeSecam));
+        double r = 0, g = 0, b = 0;
+        int n = 0;
+        for (int y = 8; y < H - 8; y++)
+        for (int x = 64; x < W - 64; x++) { r += img[y, x, 0]; g += img[y, x, 1]; b += img[y, x, 2]; n++; }
+        r /= n; g /= n; b /= n;
+        Assert.True(g > r && g > b, $"средний цвет чёрного R {r:F4} G {g:F4} B {b:F4}");
+        Assert.True(g >= 6 / 255.0 && g <= 20 / 255.0, $"средний G чёрного {g * 255:F1}/255 (нужно 6..20)");
+
+        var along = new List<double>();
+        for (int y = 8; y < H - 8; y++)
+        for (int x0 = 200; x0 + 200 <= 1700; x0 += 200)
+        {
+            var seg = new List<double>();
+            for (int x = x0; x < x0 + 200; x++) seg.Add(GpuHarness.Luma(img, x, y));
+            along.Add(StdDev(seg));
+        }
+        var across = new List<double>();
+        for (int x = 200; x < 1700; x += 50)
+        {
+            var col = new List<double>();
+            for (int y = 8; y < H - 8; y++) col.Add(GpuHarness.Luma(img, x, y));
+            across.Add(StdDev(col));
+        }
+        double sAlong = along.Average(), sAcross = across.Average();
+        Assert.True(sAlong < sAcross, $"шум вдоль строки {sAlong:F5}, поперёк {sAcross:F5}");
+    }
+
+    [Fact]
+    public void Secam_BlackFires_LongMultiColorStreaks()
+    {
+        // Чёрный вход, fires=1, 60 кадров: длинные (≥ 80 px) цветные штрихи, среди них с G-доминантой и с B-доминантой.
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0f, 0f, 0f));
+        using var f = gpu.Create<TvFilter>();
+        int longRuns = 0, greenRuns = 0, blueRuns = 0;
+        for (int frame = 0; frame < 60; frame++)
+        {
+            var img = gpu.Run(f, frame, Secam(fires: 1f));
+            for (int y = 8; y < H - 8; y++)
+            {
+                int start = -1;
+                for (int x = 0; x <= W; x++)
+                {
+                    bool on = x < W && Chroma(img, x, y) > 0.06f;
+                    if (on && start < 0) start = x;
+                    if (!on && start >= 0)
+                    {
+                        int len = x - start;
+                        if (len >= 80)
+                        {
+                            longRuns++;
+                            double sr = 0, sg = 0, sb = 0;
+                            for (int k = start; k < x; k++) { sr += img[y, k, 0]; sg += img[y, k, 1]; sb += img[y, k, 2]; }
+                            sr /= len; sg /= len; sb /= len;
+                            if (sg - Math.Max(sr, sb) > 0.02) greenRuns++;
+                            if (sb - Math.Max(sr, sg) > 0.02) blueRuns++;
+                        }
+                        start = -1;
+                    }
+                }
+            }
+        }
+        Assert.True(longRuns > 0, "длинных штрихов нет");
+        Assert.True(greenRuns > 0, $"штрихов с G-доминантой нет (всего {longRuns})");
+        Assert.True(blueRuns > 0, $"штрихов с B-доминантой нет (всего {longRuns})");
+    }
+
+    [Fact]
+    public void Secam_WhiteRect_GreenTailRightOnly()
+    {
+        // Белый прямоугольник 100 px на чёрном (fires=0, чтобы мерить только хвост): справа в пределах 3 ширин — зелёный хвост, слева — нет.
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (x >= 800 && x < 900 && y >= 20 && y < 44) ? (1f, 1f, 1f) : (0f, 0f, 0f));
+        using var f = gpu.Create<TvFilter>();
+        var img = gpu.Run(f, 0, Mode(ModeSecam));
+        double rR = 0, rG = 0, rB = 0, lR = 0, lG = 0, lB = 0;
+        int rn = 0, ln = 0;
+        for (int y = 20; y < 44; y++)
+        {
+            for (int x = 905; x < 1190; x++) { rR += img[y, x, 0]; rG += img[y, x, 1]; rB += img[y, x, 2]; rn++; }
+            for (int x = 610; x < 795; x++) { lR += img[y, x, 0]; lG += img[y, x, 1]; lB += img[y, x, 2]; ln++; }
+        }
+        rR /= rn; rG /= rn; rB /= rn; lR /= ln; lG /= ln; lB /= ln;
+        Assert.True(rG > rR && rG > rB, $"справа от текста R {rR:F4} G {rG:F4} B {rB:F4}");
+        // T4: чёрное поле уже зеленоватое по требованию (подъём чёрного), поэтому «слева нет хвоста» проверяем
+        // относительно этого фона: справа зелёный избыток заметно больше, чем слева.
+        double rExc = rG - Math.Max(rR, rB), lExc = lG - Math.Max(lR, lB);
+        Assert.True(rExc > lExc, $"хвост справа {rExc:F4}, слева {lExc:F4}");
+    }
+
+    [Fact]
+    public void Secam_EdgeLeftLine_RaggedBrightStripe()
+    {
+        // T4 (решение пользователя): edge=1 — светлая рваная вертикальная линия слева, зона 1.2–1.8% ширины.
+        const int HB = 1080;
+        using var gpu = new GpuHarness(W, HB);
+        gpu.SetInput((x, y) => (0f, 0f, 0f));
+        using var f = gpu.Create<TvFilter>();
+        int x0 = (int)(0.012 * W), x1 = (int)(0.018 * W);
+
+        var on = gpu.Run(f, 0, Secam(edge: 1f));
+        double mean = 0;
+        int n = 0;
+        var argmax = new List<double>();
+        for (int y = 8; y < HB - 8; y++)
+        {
+            int best = x0;
+            float bv = -1f;
+            for (int x = x0; x < x1; x++)
+            {
+                float l = GpuHarness.Luma(on, x, y);
+                mean += l; n++;
+                if (l > bv) { bv = l; best = x; }
+            }
+            argmax.Add(best);
+        }
+        mean /= n;
+        Assert.True(mean > 0.3, $"средняя яркость зоны линии {mean:F3} (нужно > 0.3)");
+        double sd = StdDev(argmax);
+        Assert.True(sd >= 0.5, $"std x самого яркого пикселя по строкам {sd:F2} px (нужно ≥ 0.5)");
+
+        var off = gpu.Run(f, 0, Secam(edge: 0f));
+        double offMean = 0;
+        for (int y = 8; y < HB - 8; y++)
+            for (int x = x0; x < x1; x++) offMean += GpuHarness.Luma(off, x, y);
+        offMean /= n;
+        Assert.True(offMean < 0.1, $"при edge=0 линии нет, но зона яркая: {offMean:F3}");
+    }
+
+    [Fact]
+    public void Secam_WhiteRect_TailIsBackgroundHueRotated()
+    {
+        // T4 (решение пользователя): хвост = цветность фона, повёрнутая по оттенку на −120°.
+        // На красном фоне хвост сине-фиолетовый (B > G), на зелёном — красный (R > B).
+        static (double dr, double dg, double db) Tail(float br, float bg, float bb)
+        {
+            using var gpu = new GpuHarness(W, H);
+            gpu.SetInput((x, y) => (x >= 800 && x < 900 && y >= 20 && y < 44) ? (1f, 1f, 1f) : (br, bg, bb));
+            using var f = gpu.Create<TvFilter>();
+            var img = gpu.Run(f, 0, Secam(fires: 0.01f));
+            double rR = 0, rG = 0, rB = 0, lR = 0, lG = 0, lB = 0;
+            int rn = 0, ln = 0;
+            for (int y = 20; y < 44; y++)
+            {
+                for (int x = 905; x < 1190; x++) { rR += img[y, x, 0]; rG += img[y, x, 1]; rB += img[y, x, 2]; rn++; }
+                for (int x = 610; x < 795; x++) { lR += img[y, x, 0]; lG += img[y, x, 1]; lB += img[y, x, 2]; ln++; }
+            }
+            return (rR / rn - lR / ln, rG / rn - lG / ln, rB / rn - lB / ln);
+        }
+
+        var red = Tail(0.6f, 0.1f, 0.1f);
+        Assert.True(red.db > red.dg, $"хвост на красном: dR {red.dr:F4} dG {red.dg:F4} dB {red.db:F4} (нужно B > G)");
+        var green = Tail(0.1f, 0.6f, 0.1f);
+        Assert.True(green.dr > green.db, $"хвост на зелёном: dR {green.dr:F4} dG {green.dg:F4} dB {green.db:F4} (нужно R > B)");
+    }
+
+    // ---------- T5: двоение эфира (ghost) ----------
+
+    [Fact]
+    public void Ghost_EchoRightOfStripe_DarkSecondEcho()
+    {
+        // Белая полоса 8 px на чёрном, PAL, ghost=1, ghostDelay=0.02: эхо справа на d, слева пусто, второе эхо на 2.3d тёмное.
+        const int x0 = 960;
+        int d = (int)Math.Round(0.02 * W);
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (x >= x0 && x < x0 + 8) ? (1f, 1f, 1f) : (0f, 0f, 0f));
+        using var f = gpu.Create<TvFilter>();
+        var img = gpu.Run(f, 0, new Dictionary<string, float>
+        {
+            ["mode"] = ModePal, ["amount"] = 1f, ["ghost"] = 1f, ["ghostDelay"] = 0.02f,
+        });
+        int row = H / 2;
+        float MaxLuma(int from, int to)
+        {
+            float m = 0;
+            for (int x = from; x <= to; x++) m = Math.Max(m, GpuHarness.Luma(img, x, row));
+            return m;
+        }
+        float right = MaxLuma(x0 + d - 3, x0 + d + 3);
+        float left = MaxLuma(x0 - d - 3, x0 - d + 3);
+        float second = MaxLuma((int)(x0 + 2.3 * d) - 3, (int)(x0 + 2.3 * d) + 3);
+        Assert.True(right >= 0.2f, $"эхо справа {right:F3} (нужно ≥ 0.2)");
+        Assert.True(left < 0.03f, $"слева от полосы {left:F3} (нужно < 0.03)");
+        Assert.True(second <= 0.01f, $"второе эхо {second:F3} (нужно ≤ фона + 0.01)");
+    }
+
+    [Fact]
+    public void Ghost_Mean_StaysWithin004()
+    {
+        // Средняя яркость кадра при ghost=1 мало меняется (±0.04 от ghost=0).
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => { float v = ((x * 7 + y * 13) % 64) / 64f; return (v, v, v); });
+        using var f = gpu.Create<TvFilter>();
+        double Mean(float ghost)
+        {
+            var img = gpu.Run(f, 0, new Dictionary<string, float> { ["mode"] = ModePal, ["amount"] = 1f, ["ghost"] = ghost });
+            double m = 0;
+            int n = 0;
+            for (int y = 8; y < H - 8; y++)
+            for (int x = 64; x < W - 64; x++) { m += GpuHarness.Luma(img, x, y); n++; }
+            return m / n;
+        }
+        double m0 = Mean(0f), m1 = Mean(1f);
+        Assert.True(Math.Abs(m1 - m0) <= 0.04, $"средняя яркость ghost=0 {m0:F3}, ghost=1 {m1:F3}");
+    }
+
+    [Fact]
+    public void Secam_FiberNoise_GreenStrongerThanBlue()
+    {
+        // Одинаковый строчный шум на ровных полях: на зелёном (×1.6) разброс яркости по строкам больше, чем на синем (×0.6).
+        double Spread(float r, float g, float b)
+        {
+            using var gpu = new GpuHarness(W, H);
+            gpu.SetInput((x, y) => (r, g, b));
+            using var f = gpu.Create<TvFilter>();
+            var img = gpu.Run(f, 0, Mode(ModeSecam));
+            var sds = new List<double>();
+            for (int y = 8; y < H - 8; y++)
+            {
+                var row = new List<double>();
+                for (int x = 200; x < 1700; x++) row.Add(GpuHarness.Luma(img, x, y));
+                sds.Add(StdDev(row));
+            }
+            return sds.Average();
+        }
+        double green = Spread(0.2f, 0.6f, 0.2f), blue = Spread(0.2f, 0.2f, 0.6f);
+        Assert.True(green > blue, $"разброс по строкам: зелёный {green:F5}, синий {blue:F5}");
+    }
+
+    [Fact]
+    public void Secam_FlatCyan_NotSmoothAndColorKept()
+    {
+        // Ровное поле (0.45, 0.6, 0.6): яркость по строкам не гладкая, среднее цвета в пределах ±0.03 от входа.
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0.45f, 0.6f, 0.6f));
+        using var f = gpu.Create<TvFilter>();
+        var img = gpu.Run(f, 0, Mode(ModeSecam));
+        var rowStd = new List<double>();
+        double r = 0, g = 0, b = 0;
+        int n = 0;
+        for (int y = 8; y < H - 8; y++)
+        {
+            var row = new List<double>();
+            for (int x = 200; x < 1700; x++)
+            {
+                row.Add(GpuHarness.Luma(img, x, y));
+                r += img[y, x, 0]; g += img[y, x, 1]; b += img[y, x, 2]; n++;
+            }
+            rowStd.Add(StdDev(row));
+        }
+        double sd = rowStd.Average();
+        Assert.True(sd > 0.01, $"отклонение яркости по строкам {sd:F4}");
+        r /= n; g /= n; b /= n;
+        // T4 (решение пользователя): насыщенность по умолчанию не трогаем (0.6 даёт пастель), поэтому цвет проверяем
+        // как сохранение оттенка: порядок каналов G≈B > R, оттенок в пределах ±10° от входа, яркость ±0.05.
+        Assert.True(g > r && b > r && Math.Abs(g - b) < 0.05, $"порядок каналов R {r:F3} G {g:F3} B {b:F3}");
+        double Hue(double rr, double gg, double bb) => Math.Atan2(0.713 * (rr - (0.299 * rr + 0.587 * gg + 0.114 * bb)),
+                                                                  0.564 * (bb - (0.299 * rr + 0.587 * gg + 0.114 * bb))) * 180 / Math.PI;
+        double hIn = Hue(0.45, 0.6, 0.6), hOut = Hue(r, g, b);
+        double dh = Math.Abs(hIn - hOut);
+        if (dh > 180) dh = 360 - dh;
+        Assert.True(dh <= 10, $"оттенок {hOut:F1}° при входе {hIn:F1}° (допуск ±10°)");
+        double lumIn = 0.299 * 0.45 + 0.587 * 0.6 + 0.114 * 0.6;
+        double lumOut = 0.299 * r + 0.587 * g + 0.114 * b;
+        Assert.True(Math.Abs(lumOut - lumIn) <= 0.05, $"яркость {lumOut:F3} при входе {lumIn:F3}");
     }
 
     [Fact]
