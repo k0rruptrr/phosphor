@@ -8,22 +8,19 @@ public class CrtFilterTests
 {
     private static readonly string[] ParamNames =
     {
-        "curvature", "scanlines", "scanlinePeriod", "mask", "vignette",
-        "bloom", "bloomRadius", "flicker", "brightness", "cornerRadius",
+        "scanlines", "scanlinePeriod", "mask",
+        "bloom", "bloomRadius", "flicker", "brightness",
     };
 
     private static readonly Dictionary<string, float> Defaults = new()
     {
-        ["curvature"] = 0.08f,
         ["scanlines"] = 0.5f,
         ["scanlinePeriod"] = 3f,
         ["mask"] = 0.3f,
-        ["vignette"] = 0.35f,
         ["bloom"] = 0.8f,
         ["bloomRadius"] = 6f,
         ["flicker"] = 0.03f,
         ["brightness"] = 1.1f,
-        ["cornerRadius"] = 0.03f,
     };
 
     private static string LoadShader(string fileName)
@@ -41,7 +38,7 @@ public class CrtFilterTests
     }
 
     [Fact]
-    public void Params_HasExactlyTheTenExpectedNames()
+    public void Params_HasExactlyTheSevenExpectedNames()
     {
         var names = new CrtFilter().Params.Select(p => p.Name).ToArray();
         Assert.Equal(ParamNames, names);

@@ -18,8 +18,17 @@ internal sealed class Log : IDisposable
         }
         catch (IOException)
         {
-            Path = System.IO.Path.Combine(tmp, $"phosphor-{Environment.ProcessId}.log");
-            _w = new StreamWriter(new FileStream(Path, FileMode.Create, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
+            // Свой файл по PID; если и он занят (второй Log в том же процессе) — с номером
+            for (int n = 0; ; n++)
+            {
+                Path = System.IO.Path.Combine(tmp, n == 0 ? $"phosphor-{Environment.ProcessId}.log" : $"phosphor-{Environment.ProcessId}-{n}.log");
+                try
+                {
+                    _w = new StreamWriter(new FileStream(Path, FileMode.Create, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
+                    break;
+                }
+                catch (IOException) when (n < 16) { }
+            }
         }
     }
 

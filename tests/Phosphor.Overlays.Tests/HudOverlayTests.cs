@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Phosphor.Core;
 using Phosphor.Overlays;
@@ -472,6 +473,92 @@ public class HudOverlayTests
         Assert.True(hud.TryGetMainBox(out _, out _, out _, out _), "блок не найден");
         for (int i = 0; i < counter.Length; i++)
             Assert.Equal(counter[i], grid.Cells[(rows - 2) * cols + cx + i].Ch);
+    }
+
+    private static SceneOptions Opts(string json) =>
+        new SceneOptions { Params = JsonDocument.Parse(json).RootElement };
+
+    /// <summary>Пустая чёрная сетка за кадр, оверлей после Configure (если json задан) и Init, как в хосте.</summary>
+    private static (CharGrid grid, HudOverlay hud) RunEmpty(string? json, int cols, int rows, int frames)
+    {
+        var hud = new HudOverlay();
+        if (json != null) hud.Configure(Opts(json));
+        hud.Init(cols, rows, new Random(1));
+        var grid = new CharGrid(cols, rows);
+        var ctx = Ctx(clock: new DateTime(2026, 10, 9, 4, 20, 15));
+        for (int f = 0; f < frames; f++)
+        {
+            Paint(grid, _ => { });
+            hud.Update(Dt);
+            hud.Apply(grid, ctx);
+        }
+        return (grid, hud);
+    }
+
+    private static bool AnyFg(CharGrid g, Rgba fg)
+    {
+        foreach (var c in g.Cells) if (c.Fg == fg) return true;
+        return false;
+    }
+
+    private static bool RulerAt(CharGrid g)
+    {
+        for (int y = 3; y <= g.Rows - 4; y++)
+        {
+            char c = g.Cells[y * g.Cols + 2].Ch;
+            if (c == '├' || c == '┼') return true;
+        }
+        return false;
+    }
+
+    [Fact]
+    public void Accent_Cyan_ReplacesOrangeEverywhere()
+    {
+        var (grid, _) = RunEmpty("{\"accent\":\"cyan\"}", 192, 60, 120);   // 2 с: REC мигает
+        Assert.True(AnyFg(grid, Rgba.Hex(0x00C8FF)), "акцент cyan не нарисован");
+        Assert.False(AnyFg(grid, Accent), "оранжевый акцент остался");
+    }
+
+    [Fact]
+    public void RulerOff_NoRulerMarksInFirstColumn()
+    {
+        var (on, _) = RunEmpty(null, 192, 60, 120);
+        Assert.True(RulerAt(on), "линейка по умолчанию не нарисована (проверка теста)");
+
+        var (off, _) = RunEmpty("{\"ruler\":false}", 192, 60, 120);
+        Assert.False(RulerAt(off), "ruler=false, а линейка нарисована");
+    }
+
+    [Fact]
+    public void TargetsZero_NoTargetFramesNoTracking()
+    {
+        const int cols = 192, rows = 60;
+        Func<string?, (CharGrid, HudOverlay)> run = json =>
+        {
+            var dvd = new DvdScene();
+            dvd.Init(cols, rows, new Random(1), new SceneOptions());
+            var grid = new CharGrid(cols, rows);
+            var hud = new HudOverlay();
+            if (json != null) hud.Configure(Opts(json));
+            hud.Init(cols, rows, new Random(1));
+            for (int f = 0; f < 180; f++)
+            {
+                dvd.Update(Dt);
+                dvd.Draw(grid);
+                hud.Update(Dt);
+                hud.Apply(grid, Ctx());
+            }
+            return (grid, hud);
+        };
+
+        var (on, hudOn) = run(null);
+        Assert.True(hudOn.TryGetMainBox(out _, out _, out _, out _), "цель по умолчанию не найдена (проверка теста)");
+        Assert.True(Contains(on, "TGT-"), "подпись по умолчанию не нарисована (проверка теста)");
+
+        var (off, hudOff) = run("{\"targets\":0}");
+        Assert.False(hudOff.TryGetMainBox(out _, out _, out _, out _), "targets=0, а трекинг нашёл цель");
+        Assert.False(Contains(off, "TGT-"), "targets=0, а подпись цели нарисована");
+        Assert.False(Contains(off, "┌"), "targets=0, а уголки цели нарисованы");
     }
 
     [Fact]

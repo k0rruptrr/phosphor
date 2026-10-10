@@ -249,6 +249,8 @@ public class LaunchArgsTests
     [InlineData("network")]
     [InlineData("font")]
     [InlineData("about")]
+    [InlineData("overlays")]
+    [InlineData("screen")]
     public void SettingsShot_TabIsCaseInsensitive(string tab)
     {
         var a = LaunchArgs.Parse(new[] { "--settings-shot", "x.png", "--tab", tab });
@@ -285,5 +287,39 @@ public class LaunchArgsTests
     public void SettingsShotAndWindowed_AreTwoModes_Throw()
     {
         Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "--settings-shot", "x.png", "/w" }));
+    }
+
+    [Fact]
+    public void Overlay_ParsesVcr()
+    {
+        var a = LaunchArgs.Parse(new[] { "--shot", "a.png", "--overlay", "vcr" });
+        Assert.Equal("vcr", a.Overlay);
+    }
+
+    [Fact]
+    public void Overlay_WithoutFlag_IsNull()
+    {
+        Assert.Null(LaunchArgs.Parse(new[] { "/w" }).Overlay);
+        Assert.Null(LaunchArgs.Parse(new[] { "--shot", "a.png" }).Overlay);
+    }
+
+    [Fact]
+    public void Overlay_WorksWithPreview()
+    {
+        var a = LaunchArgs.Parse(new[] { "/p", "12345", "--overlay", "hud" });
+        Assert.Equal("hud", a.Overlay);
+    }
+
+    [Fact]
+    public void Overlay_WithoutValue_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "/w", "--overlay" }));
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "/w", "--overlay", "--size", "1920x1080" }));
+    }
+
+    [Fact]
+    public void Overlay_WithScreensaver_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => LaunchArgs.Parse(new[] { "/s", "--overlay", "hud" }));
     }
 }

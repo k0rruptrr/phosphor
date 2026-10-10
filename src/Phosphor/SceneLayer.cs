@@ -58,6 +58,8 @@ internal sealed class SceneLayer : IDisposable
         if (overlayId is not null && s.Overlays.TryGetValue(overlayId, out var make))
         {
             Overlay = make();
+            // Параметры оверлея (overlay.params.<id>) — до Init
+            if (Overlay is IOverlayParams op) op.Configure(s.Config.OverlayOptionsFor(Overlay.Id));
             Overlay.Init(cols, rows, new Random(s.Rng.Next()));
         }
 
@@ -109,8 +111,8 @@ internal sealed class SceneLayer : IDisposable
 
         _chain = new FilterChain(_s.Gl, _s.Filters, stages, _rt.Width, _rt.Height);
         PresetName = name;
-        // Проверка при каждой смене пресета: видик только для цепочки с vhs
-        _vcrOn = _s.Config.Overlay.VcrFor(_chain.FilterIds);
+        // Проверка при каждой смене пресета: видик только для цепочки с vhs (--overlay vcr — на любом пресете)
+        _vcrOn = _s.VcrForced || _s.Config.Overlay.VcrFor(_chain.FilterIds);
         foreach (var w in warnings.Concat(_chain.Warnings)) _s.Log.Warn($"[{_index}] пресет {name}: {w}");
         _s.Log.Info($"[{_index}] пресет {name}: {string.Join(" → ", gridIds.Concat(_chain.FilterIds))}");
     }

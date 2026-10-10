@@ -20,8 +20,9 @@ public sealed class TvFilter : ShaderFilter
         new ParamSpec("sharpness", 0.3f, 0f, 1f, null, "Звон и перерегулирование яркости на краях", "резкость"),
         new ParamSpec("saturation", 0.6f, 0f, 1.5f, null, "SECAM: насыщенность декодированного цвета (пастель)", "насыщенность"),
         new ParamSpec("fires", 0.5f, 0f, 1f, null, "SECAM: количество факелов (красно-розовых и бирюзовых штрихов)", "факелы"),
+        new ParamSpec("fireSize", 1f, 0.3f, 2.5f, null, "SECAM: длина и яркость факелов", "размер факелов"),
         new ParamSpec("signal", 1f, 0f, 1f, null, "SECAM: качество приёма, 1 = идеально, ниже = снег и факелы от шума", "качество приёма"),
-        new ParamSpec("edge", 0.35f, 0f, 1f, null, "Сигналы опознавания (бутылки) сверху кадра", "опознавание"),
+        new ParamSpec("edge", 0.35f, 0f, 1f, null, "SECAM: сигналы опознавания („бутылки“) сверху кадра, 0 — выкл", "бутылки (опознавание)"),
     };
 
     private const string EncodeResource = "Phosphor.Filters.Shaders.tv_encode.frag";

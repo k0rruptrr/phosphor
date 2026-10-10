@@ -175,6 +175,8 @@ public class SettingsParamsTests
     public void Modified_AndUnwritten_Markers()
     {
         var cfg = Defaults();
+        // Свой пресет в файле: кривизна теперь задаёт экран (g2), поэтому у «clean» из встроенного конфига её нет
+        cfg.Filters.Presets["clean"] = Json("""[ {"id":"crt","curvature":0.04} ]""");
         var m = Model(cfg);
         Assert.False(m.IsPresetModified("clean"));
         Assert.False(m.HasUnwrittenPresetChanges());

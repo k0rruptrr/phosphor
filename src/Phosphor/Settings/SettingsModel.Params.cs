@@ -28,41 +28,11 @@ public sealed partial class SettingsModel
     public IReadOnlyList<SceneParamSpec>? SceneSpecs(string sceneId) => _specs.Scene(sceneId);
 
     /// <summary>Текущее значение параметра сцены: из конфига или умолчание. Float/Int — число, Bool — 0/1, Choice — индекс в Options.</summary>
-    public double SceneParamValue(string sceneId, SceneParamSpec spec)
-    {
-        var p = Config.Scenes.Params;
-        if (p.ValueKind == JsonValueKind.Object
-            && p.TryGetProperty(sceneId, out var sc) && sc.ValueKind == JsonValueKind.Object
-            && sc.TryGetProperty(spec.Name, out var v))
-        {
-            var n = ToNumber(spec, v);
-            if (n is not null) return n.Value;
-        }
-        return spec.Default;
-    }
+    public double SceneParamValue(string sceneId, SceneParamSpec spec) => KeyedValue(Config.Scenes.Params, sceneId, spec);
 
     /// <summary>Записать значение параметра сцены (Float/Int — число, Bool — 0/1, Choice — индекс). Значение по умолчанию — ключ удаляется.</summary>
-    public void SetSceneParam(string sceneId, SceneParamSpec spec, double value)
-    {
-        value = NormalizeSceneValue(spec, value);
-        var root = ToObject(Config.Scenes.Params);
-        var scene = root[sceneId] as JsonObject;
-        if (IsSceneDefault(spec, value))
-        {
-            scene?.Remove(spec.Name);
-        }
-        else
-        {
-            if (scene is null)
-            {
-                scene = new JsonObject();
-                root[sceneId] = scene;
-            }
-            scene[spec.Name] = ToSceneNode(spec, value);
-        }
-        if (scene is not null && scene.Count == 0) root.Remove(sceneId);
-        Config.Scenes.Params = ToElement(root);
-    }
+    public void SetSceneParam(string sceneId, SceneParamSpec spec, double value) =>
+        Config.Scenes.Params = KeyedSet(Config.Scenes.Params, sceneId, spec, value);
 
     /// <summary>«По умолчанию» у одного параметра: ключ удаляется.</summary>
     public void ResetSceneParam(string sceneId, SceneParamSpec spec) => SetSceneParam(sceneId, spec, spec.Default);
@@ -72,13 +42,55 @@ public sealed partial class SettingsModel
     {
         var specs = SceneSpecs(sceneId);
         if (specs is null || specs.Count == 0) return;
-        var root = ToObject(Config.Scenes.Params);
-        if (root[sceneId] is JsonObject scene)
+        Config.Scenes.Params = KeyedReset(Config.Scenes.Params, sceneId, specs);
+    }
+
+    /// <summary>Значение параметра из root[key] (общее для сцен и оверлеев): из конфига или умолчание.</summary>
+    private static double KeyedValue(JsonElement root, string key, SceneParamSpec spec)
+    {
+        if (root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(key, out var sc) && sc.ValueKind == JsonValueKind.Object
+            && sc.TryGetProperty(spec.Name, out var v))
+        {
+            var n = ToNumber(spec, v);
+            if (n is not null) return n.Value;
+        }
+        return spec.Default;
+    }
+
+    /// <summary>Записать root[key][spec.Name]. Умолчание — ключ удаляется; пустой объект key удаляется. Возвращает новый root.</summary>
+    private static JsonElement KeyedSet(JsonElement root, string key, SceneParamSpec spec, double value)
+    {
+        value = NormalizeSceneValue(spec, value);
+        var obj = ToObject(root);
+        var scene = obj[key] as JsonObject;
+        if (IsSceneDefault(spec, value))
+        {
+            scene?.Remove(spec.Name);
+        }
+        else
+        {
+            if (scene is null)
+            {
+                scene = new JsonObject();
+                obj[key] = scene;
+            }
+            scene[spec.Name] = ToSceneNode(spec, value);
+        }
+        if (scene is not null && scene.Count == 0) obj.Remove(key);
+        return ToElement(obj);
+    }
+
+    /// <summary>Удалить ключи параметров из описания у root[key] (неизвестные ключи остаются). Возвращает новый root.</summary>
+    private static JsonElement KeyedReset(JsonElement root, string key, IReadOnlyList<SceneParamSpec> specs)
+    {
+        var obj = ToObject(root);
+        if (obj[key] is JsonObject scene)
         {
             foreach (var s in specs) scene.Remove(s.Name);
-            if (scene.Count == 0) root.Remove(sceneId);
+            if (scene.Count == 0) obj.Remove(key);
         }
-        Config.Scenes.Params = ToElement(root);
+        return ToElement(obj);
     }
 
     // ---------- Стадии пресетов фильтров ----------

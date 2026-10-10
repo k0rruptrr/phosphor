@@ -8,7 +8,7 @@ namespace Phosphor.Overlays;
 public sealed class VcrState
 {
     public const double TapeSec = 180 * 60;      // кассета E-180
-    public const double ShowSec = 4.0;           // показ PLAY/SP/счётчика после включения и после REW
+    public const double ShowSec = 4.0;           // показ PLAY/SP/счётчика после включения и после REW (по умолчанию)
     public const double PlayBlinkSec = 2.0;      // первые секунды показа PLAY мигает
     public const double RewSec = 4.0;            // надпись REW после конца ленты
     public const double RewQuick = 1.0;         // шкала уезжает к пустой за это время
@@ -21,6 +21,9 @@ public sealed class VcrState
     private double _showAge;    // сколько показываем с начала текущего показа (для мигания PLAY)
     private double _rewLeft;    // сколько ещё показывать REW (после конца ленты)
     private bool _on;
+
+    /// <summary>Сколько секунд длится показ PLAY/SP/счётчика (настройка showSec, по умолчанию ShowSec).</summary>
+    public double ShowLength { get; set; } = ShowSec;
 
     /// <summary>Секунды с запуска (сумма dt).</summary>
     public double Time => _t;
@@ -84,7 +87,7 @@ public sealed class VcrState
 
     private void StartShow()
     {
-        _showLeft = ShowSec;
+        _showLeft = ShowLength;
         _showAge = 0;
     }
 }

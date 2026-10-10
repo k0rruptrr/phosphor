@@ -7,7 +7,7 @@ public enum LaunchMode { Screensaver, Preview, Configure, Windowed, Shot, Settin
 /// <summary>Вкладки окна настроек (допустимые значения --tab).</summary>
 public static class SettingsTabs
 {
-    public static readonly string[] All = { "scenes", "filters", "shuffle", "dimmer", "network", "font", "about" };
+    public static readonly string[] All = { "scenes", "filters", "overlays", "screen", "shuffle", "dimmer", "network", "font", "about" };
 }
 
 /// <summary>Разобранные аргументы командной строки. Формат — тот, с которым Windows вызывает .scr.</summary>
@@ -19,6 +19,7 @@ public sealed class LaunchArgs
     public string? Scene { get; init; }        // --scene <id>, для Windowed, Shot и Preview
     public string? Preset { get; init; }       // --preset <name>, для Windowed, Shot и Preview
     public string? SettingsTab { get; init; }  // --tab <имя>, для SettingsShot (по умолчанию scenes)
+    public string? Overlay { get; init; }      // --overlay <id> (hud|vcr), для Windowed, Shot и Preview
     public int Frames { get; init; } = 120;    // --frames N, для Windowed и Shot
     public int Width { get; init; } = 1280;    // --size WxH
     public int Height { get; init; } = 720;
@@ -48,6 +49,7 @@ public sealed class LaunchArgs
         int seed = 1;
         string? tab = null;
         string? configPath = null;
+        string? overlay = null;
         var seenOptions = new HashSet<string>(StringComparer.Ordinal);
 
         void SetMode(LaunchMode m)
@@ -135,6 +137,11 @@ public sealed class LaunchArgs
                     preset = NextValue("--preset");
                     break;
 
+                case "--overlay":
+                    Option("--overlay");
+                    overlay = NextValue("--overlay").ToLowerInvariant();
+                    break;
+
                 case "--frames":
                     Option("--frames");
                     frames = ParsePositiveInt(NextValue("--frames"), "--frames");
@@ -182,7 +189,7 @@ public sealed class LaunchArgs
             if (!OptionAllowed(mode.Value, opt))
                 throw new ArgumentException(mode.Value == LaunchMode.Preview || opt is "--tab"
                     ? $"Опция {opt} здесь не допустима."
-                    : "Опции --scene, --preset, --frames, --size, --seed допустимы только с /w и --shot (--scene и --preset ещё с /p); --tab — только с --settings-shot.");
+                    : "Опции --scene, --preset, --overlay, --frames, --size, --seed допустимы только с /w и --shot (--scene, --preset и --overlay ещё с /p); --tab — только с --settings-shot.");
         }
 
         if (mode == LaunchMode.Preview && parent == 0)
@@ -201,6 +208,7 @@ public sealed class LaunchArgs
             Height = height,
             Seed = seed,
             ConfigPath = configPath,
+            Overlay = overlay,
         };
     }
 
@@ -210,8 +218,8 @@ public sealed class LaunchArgs
         if (opt is "--config") return true;
         return mode switch
         {
-            LaunchMode.Windowed or LaunchMode.Shot => opt is "--scene" or "--preset" or "--frames" or "--size" or "--seed",
-            LaunchMode.Preview => opt is "--scene" or "--preset",
+            LaunchMode.Windowed or LaunchMode.Shot => opt is "--scene" or "--preset" or "--overlay" or "--frames" or "--size" or "--seed",
+            LaunchMode.Preview => opt is "--scene" or "--preset" or "--overlay",
             LaunchMode.SettingsShot => opt is "--tab",
             _ => false,
         };

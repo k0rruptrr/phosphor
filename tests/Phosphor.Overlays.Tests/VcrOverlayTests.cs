@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Phosphor.Core;
 using Phosphor.Overlays;
 
@@ -320,5 +321,140 @@ public class VcrOverlayTests
         // 60 колонок: между PLAY и часами места под AUTO TRACKING нет — строка такая же, как без усталости
         for (int x = 0; x < cols; x++)
             Assert.Equal(without[x, 2].Ch, withFatigue[x, 2].Ch);
+    }
+
+    // ---- параметры overlay.params.vcr ----
+
+    private static VcrOverlay Configured(int cols, int rows, string json)
+    {
+        var v = new VcrOverlay();
+        v.Configure(new SceneOptions { Params = JsonDocument.Parse(json).RootElement });
+        v.Init(cols, rows, new Random(1));
+        v.SetOn(true);
+        return v;
+    }
+
+    /// <summary>Как хост: на каждом кадре свежая сетка, Apply — только если оверлей видим (IsVisible).</summary>
+    private static CharGrid Run(VcrOverlay v, int cols, int rows, double seconds)
+    {
+        int frames = (int)Math.Round(seconds * 60);
+        var g = Filled(cols, rows);
+        for (int f = 0; f < frames; f++)
+        {
+            v.Update(1f / 60f);
+            g = Filled(cols, rows);
+            if (v.IsVisible(0f)) v.Apply(g, Ctx());
+        }
+        return g;
+    }
+
+    private static bool AnyRowContains(CharGrid g, string s)
+    {
+        for (int y = 0; y < g.Rows; y++)
+            if (Row(g, y).Contains(s, StringComparison.Ordinal)) return true;
+        return false;
+    }
+
+    private static bool AnySextant(CharGrid g)
+    {
+        foreach (var c in g.Cells) if (c.Ch >= 0xE000 && c.Ch <= 0xE03F) return true;   // U+E000..U+E03F, числом
+        return false;
+    }
+
+    /// <summary>Есть клетки с символом ch и все они цвета fg.</summary>
+    private static bool AllFgOf(CharGrid g, char ch, Rgba fg)
+    {
+        int n = 0;
+        foreach (var c in g.Cells)
+        {
+            if (c.Ch != ch) continue;
+            if (c.Fg != fg) return false;
+            n++;
+        }
+        return n > 0;
+    }
+
+    [Fact]
+    public void Style_Text_IsAlwaysSmallMode_NoSextants()
+    {
+        var big = Filled(200, 60);
+        Configured(200, 60, "{}").Apply(big, Ctx());    // контроль: по умолчанию крупный шрифт (секстанты)
+        Assert.True(AnySextant(big), "контроль: по умолчанию секстантов нет");
+
+        var g = Filled(200, 60);
+        var v = Configured(200, 60, "{\"style\":\"text\"}");
+        v.Update(0.1f);
+        v.Apply(g, Ctx());
+        Assert.False(AnySextant(g), "style=text, а секстанты нарисованы");
+        Assert.True(AnyRowContains(g, "PLAY"), "style=text: PLAY не нарисован буквами");
+    }
+
+    [Fact]
+    public void Color_Green_ColorsLetters()
+    {
+        var g = Filled(200, 60);
+        var v = Configured(200, 60, "{\"style\":\"text\",\"color\":\"green\"}");
+        v.Update(0.1f);
+        v.Apply(g, Ctx());
+        Assert.True(AllFgOf(g, 'P', Rgba.Hex(0x3CFF3C)), "буквы PLAY не зелёные");
+    }
+
+    [Fact]
+    public void ShowSec_Configurable_ControlsHowLongOsdStays()
+    {
+        var v10 = Configured(200, 60, "{\"style\":\"text\",\"showSec\":10}");
+        var g10 = Run(v10, 200, 60, 6);
+        Assert.True(AnyRowContains(g10, "SP"), "showSec=10: через 6 с OSD уже погас");
+
+        var v4 = Configured(200, 60, "{\"style\":\"text\",\"showSec\":4}");
+        var g4 = Run(v4, 200, 60, 6);
+        Assert.False(AnyRowContains(g4, "SP"), "showSec=4: через 6 с OSD ещё виден");
+    }
+
+    [Fact]
+    public void Demo_KeepsPlayClockAndCounterVisibleAfterSixtySeconds()
+    {
+        var v = Configured(200, 60, "{\"style\":\"text\"}");
+        v.Demo = true;
+        var g = Run(v, 200, 60, 60);
+        Assert.True(AnyRowContains(g, "PLAY"), "Demo: PLAY не виден после 60 с");
+        Assert.True(AnyRowContains(g, "SP "), "Demo: часы не видны после 60 с");
+        Assert.True(AnyRowContains(g, "]E"), "Demo: счётчик не виден после 60 с");
+        for (int f = 0; f < 60; f++)   // в течение секунды PLAY не мигает
+        {
+            v.Update(1f / 60f);
+            var frame = Filled(200, 60);
+            v.Apply(frame, Ctx());
+            Assert.True(AnyRowContains(frame, "PLAY"), $"Demo: PLAY пропал на {f} кадре после 60 с");
+        }
+    }
+
+    [Fact]
+    public void CounterOff_NoTapeBarOrCounter()
+    {
+        var on = Run(Configured(200, 60, "{\"style\":\"text\"}"), 200, 60, 1);
+        Assert.True(AnyRowContains(on, "["), "контроль: шкала не нарисована по умолчанию");
+
+        var off = Run(Configured(200, 60, "{\"style\":\"text\",\"counter\":false}"), 200, 60, 1);
+        Assert.False(AnyRowContains(off, "["), "counter=false, а шкала '[' нарисована");
+        Assert.False(AnyRowContains(off, "]E"), "counter=false, а счётчик нарисован");
+        Assert.True(AnyRowContains(off, "PLAY"), "counter=false: PLAY должен остаться");
+    }
+
+    [Fact]
+    public void TextDump_Vcr_ForVisualCheck()
+    {
+        var sb = new StringBuilder();
+        foreach (var style in new[] { "pixel", "text" })
+        {
+            var v = Configured(120, 30, $"{{\"style\":\"{style}\"}}");
+            v.Demo = true;
+            var g = Run(v, 120, 30, 3);
+            sb.Append("== style=").Append(style).Append(" Demo ==\n");
+            for (int y = 0; y < g.Rows; y++) sb.Append(Row(g, y)).Append('\n');
+        }
+        string path = Path.Combine(Path.GetTempPath(), "phosphor-dump-vcr.txt");
+        File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
+        Assert.True(File.Exists(path));
     }
 }

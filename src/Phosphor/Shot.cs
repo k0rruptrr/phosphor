@@ -59,6 +59,8 @@ internal static class Shot
         // Шлейф (screen.trail) копится по всем кадрам прогона — применяем на каждом кадре, как в RunInteractive
         using var trail = new TrailBuffer(gl);
         trail.Resize(args.Width, args.Height);
+        // Корпус монитора (screen.*) — один проход на финальный кадр, после шлейфа
+        using var screenPass = new ScreenPass(gl);
         uint outTex = slot.Output;
         // Дирижёр зафиксирован (снимок детерминирован); смену можно вызвать на кадре N: env PHOSPHOR_SWITCH_AT/_TO/_KIND.
         // Синтетическая музыка (env PHOSPHOR_FAKE_BPM=120): ровный бит — для проверки реакции сцен и смен в такт.
@@ -121,6 +123,7 @@ internal static class Shot
             slot.Tick(dt, f * dt, f, audio, director.OrganismFor(0, clock), 1);
             outTex = trail.Apply(slot.Output, config.Screen.Trail);
         }
+        outTex = screenPass.Apply(outTex, args.Width, args.Height, config.Screen);
         gl.Finish();
         double ms = sw.Elapsed.TotalMilliseconds / Math.Max(1, args.Frames);
 

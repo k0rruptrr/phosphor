@@ -4,7 +4,7 @@
   "scenes": {
     "enabled": ["matrix", "starfield", "pipes", "doomfire", "life", "dvd", "aquarium",
                 "teletext", "teletype", "weatherboard", "torus", "grayscott", "voxel", "boids",
-                "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv", "scope", "bbs", "radar", "fires", "hifi", "clocks"],
+                "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv", "scope", "bbs", "radar", "fires", "hifi", "clocks", "drone"],
     "speed": 1.0,
     "palette": "default",
     "params": {
@@ -14,17 +14,17 @@
   "filters": {
     "active": "terminal",
     "presets": {
-      "clean":    [ { "id": "crt", "curvature": 0.04, "scanlines": 0.2, "bloom": 0.3 } ],
+      "clean":    [ { "id": "crt", "scanlines": 0.2, "bloom": 0.3 } ],
       "terminal": [ { "id": "mono" }, { "id": "phosphor", "color": "green", "persistence": 0.82 },
                     { "id": "crt", "mod": { "brightness": { "src": "breath", "amount": 0.12 } } } ],
       "amber":    [ { "id": "mono", "contrast": 1.15 }, { "id": "phosphor", "color": "amber", "persistence": 0.86, "mod": { "persistence": { "src": "night", "amount": 0.08 } } },
-                    { "id": "crt", "curvature": 0.1, "mod": { "brightness": { "src": "breath", "amount": 0.1 } } } ],
+                    { "id": "crt", "mod": { "brightness": { "src": "breath", "amount": 0.1 } } } ],
       "kassette": [ { "id": "vhs", "mod": { "tracking": { "src": "fatigue", "amount": 0.6 } } },
                     { "id": "chroma", "amount": 1.5 },
-                    { "id": "crt", "curvature": 0.06 } ],
-      "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt", "curvature": 0.08 } ],
-      "secam":    [ { "id": "tv", "mode": "secam", "mod": { "signal": { "src": "fatigue", "amount": -0.5 } } }, { "id": "crt", "curvature": 0.08 } ],
-      "ntsc":     [ { "id": "tv", "mode": "ntsc" }, { "id": "crt", "curvature": 0.08 } ],
+                    { "id": "crt" } ],
+      "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt" } ],
+      "secam":    [ { "id": "tv", "mode": "secam", "mod": { "signal": { "src": "fatigue", "amount": -0.5 } } }, { "id": "crt" } ],
+      "ntsc":     [ { "id": "tv", "mode": "ntsc" }, { "id": "crt" } ],
       "rave":     [ { "id": "chroma", "amount": 0.6, "mod": { "amount": { "src": "beatPulse", "amount": 1.2 } } },
                     { "id": "crt", "mod": { "bloom": { "src": "bass", "amount": 0.4 } } } ]
     }

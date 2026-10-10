@@ -178,15 +178,16 @@ public sealed partial class SettingsModel
     }
 
     /// <summary>
-    /// Аргументы дочернего процесса превью: «/p HWND --scene ID [--preset NAME] [--config PATH]» (как Windows вызывает заставку).
-    /// --config — временный конфиг окна (текущие правки, не phosphor.json).
+    /// Аргументы дочернего процесса превью: «/p HWND --scene ID [--preset NAME] [--overlay ID] [--config PATH]» (как Windows вызывает заставку).
+    /// --overlay — оверлей, который показывает превью (пока открыта вкладка «Оверлеи»). --config — временный конфиг окна (текущие правки, не phosphor.json).
     /// </summary>
-    public static string PreviewArguments(nint parentHwnd, string scene, string? preset, string? configPath = null)
+    public static string PreviewArguments(nint parentHwnd, string scene, string? preset, string? configPath = null, string? overlay = null)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("/p ").Append(parentHwnd.ToString(System.Globalization.CultureInfo.InvariantCulture));
         sb.Append(" --scene ").Append(Quote(scene));
         if (!string.IsNullOrEmpty(preset)) sb.Append(" --preset ").Append(Quote(preset));
+        if (!string.IsNullOrEmpty(overlay)) sb.Append(" --overlay ").Append(Quote(overlay));
         if (!string.IsNullOrEmpty(configPath)) sb.Append(" --config ").Append(Quote(configPath));
         return sb.ToString();
     }

@@ -11,9 +11,49 @@ namespace Phosphor.Overlays;
 /// Рисует только символами из GlyphSet, поэтому проходит через фильтры вместе со сценой.
 /// Дирижёр включает его только для пресетов со стадией vhs (см. OverlayConfig.VcrFor).
 /// </summary>
-public sealed class VcrOverlay : IOverlay
+public sealed class VcrOverlay : IOverlay, IOverlayParams
 {
     public string Id => "vcr";
+
+    /// <summary>Постоянный показ (превью в окне и снимки): PLAY без мигания, часы и счётчик видны всё время.</summary>
+    public bool Demo { get; set; }
+
+    // Параметры overlay.params.vcr (см. Configure). size и stroke читает хост, здесь не применяются.
+    private static readonly SceneParamSpec[] ParamSpecs =
+    {
+        new("style", SceneParamKind.Choice, 0f, 0f, 1f, "стиль букв (pixel — 5×7, text — шрифт)", new[] { "pixel", "text" }),
+        new("size", SceneParamKind.Float, 1f, 0.5f, 2f, "размер"),
+        new("stroke", SceneParamKind.Float, 2f, 0f, 4f, "обводка, px"),
+        new("color", SceneParamKind.Choice, 0f, 0f, 3f, "цвет букв", new[] { "white", "green", "cyan", "yellow" }),
+        new("showSec", SceneParamKind.Float, 4f, 2f, 15f, "показ после PLAY, с"),
+        new("clock", SceneParamKind.Bool, 1f, 0f, 1f, "часы"),
+        new("counter", SceneParamKind.Bool, 1f, 0f, 1f, "счётчик ленты"),
+    };
+
+    private static readonly Rgba DefaultFg = Rgba.White;
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamSpecs;
+
+    private Rgba _fg = DefaultFg;
+    private bool _text;        // style=text: всегда мелкий режим
+    private bool _clock = true;
+    private bool _counter = true;
+
+    /// <summary>Применяет overlay.params.vcr. Вызывается хостом до Init; без вызова — значения по умолчанию.</summary>
+    public void Configure(SceneOptions options)
+    {
+        _text = options.GetString("style", "pixel") == "text";
+        _fg = options.GetString("color", "white") switch
+        {
+            "green" => Rgba.Hex(0x3CFF3C),
+            "cyan" => Rgba.Hex(0x3CF0FF),
+            "yellow" => Rgba.Hex(0xFFE83C),
+            _ => DefaultFg,
+        };
+        _state.ShowLength = Math.Clamp(options.GetFloat("showSec", 4f), 2f, 15f);
+        _clock = options.GetBool("clock", true);
+        _counter = options.GetBool("counter", true);
+    }
 
     // Константы OSD
     private const int Margin = 2;                    // отступ от краёв, в клетках
@@ -23,7 +63,6 @@ public sealed class VcrOverlay : IOverlay
     private const int BigBarOverhead = 51;           // клетки под надписи крупной строки счётчика (кроме шкалы)
     private const int BufLen = 64;
 
-    private static readonly Rgba Fg = Rgba.White;
     private static readonly bool HasPlayGlyph = GlyphSet.Contains('►');
     private static readonly bool HasRewGlyph = GlyphSet.Contains('◄');
     private const string PlayBig = "PLAY ►";
@@ -47,13 +86,13 @@ public sealed class VcrOverlay : IOverlay
     public void SetOn(bool on) => _state.SetOn(on);
 
     /// <summary>Есть ли что рисовать в этом кадре. Если нет — Apply не вызывают, слой не рисуется вовсе.</summary>
-    public bool IsVisible(float fatigue) => _state.ShowOsd || _state.AutoTracking(fatigue);
+    public bool IsVisible(float fatigue) => Demo || _state.ShowOsd || _state.AutoTracking(fatigue);
 
     public void Update(float dt) => _state.Update(dt);
 
     public void Apply(CharGrid grid, in OverlayContext ctx)
     {
-        bool show = _state.ShowOsd;
+        bool show = Demo || _state.ShowOsd;
         bool auto = _state.AutoTracking(ctx.Organism.Fatigue);
         if (!show && !auto) return;
 
@@ -61,7 +100,7 @@ public sealed class VcrOverlay : IOverlay
         grid.Clear(Rgba.Black);
 
         int cols = grid.Cols, rows = grid.Rows;
-        bool big = cols >= BigMinCols && rows >= BigMinRows;
+        bool big = !_text && cols >= BigMinCols && rows >= BigMinRows;
         int adv = big ? PixelFont.Advance : 1;          // шаг символа, клеток
         int h = big ? PixelFont.CellsH : 1;             // высота строки текста, клеток
         bool rew = _state.Rew;
@@ -77,7 +116,7 @@ public sealed class VcrOverlay : IOverlay
 
         int leftEnd = Margin;                           // правый край надписи слева (для AUTO TRACKING)
         // Левый верх: REW после конца ленты, иначе PLAY (мигает первые секунды показа)
-        if (rew || _state.PlayVisible)
+        if (rew || Demo || _state.PlayVisible)
         {
             string s = rew ? (big ? RewBig : RewSmall) : (big ? PlayBig : PlaySmall);
             Emit(grid, Margin, Margin, s, big);
@@ -86,18 +125,25 @@ public sealed class VcrOverlay : IOverlay
 
         // Правый верх: SP и часы HH:MM (двоеточие мигает раз в секунду)
         _bn = 0;
-        Append("SP ");
-        if (ctx.Clock is DateTime clk)
+        Append("SP");
+        if (_clock)
         {
-            AppendNum(clk.Hour, 2);
-            _buf[_bn++] = _state.ColonVisible ? ':' : ' ';
-            AppendNum(clk.Minute, 2);
+            Append(" ");
+            if (ctx.Clock is DateTime clk)
+            {
+                AppendNum(clk.Hour, 2);
+                _buf[_bn++] = _state.ColonVisible ? ':' : ' ';
+                AppendNum(clk.Minute, 2);
+            }
+            else Append("--:--");
         }
-        else Append("--:--");
         int cw = _bn * adv;
         int cx = cols - Margin - cw;
         Emit(grid, cx, Margin, _buf.AsSpan(0, _bn), big);
         if (auto) AutoTrack(grid, leftEnd, cx - 2, adv, big);
+
+        // counter=false: шкала и счётчик не рисуются
+        if (!_counter) return;
 
         // Счётчик ленты: S[====    ]E 0:12:34
         int inner = big
@@ -117,14 +163,14 @@ public sealed class VcrOverlay : IOverlay
             if (big)
             {
                 // Шкала — блоки █ высотой 2 строки; остальные клетки строки — пустые
-                for (int dy = 0; dy < h; dy++) grid.Put(barX + i, barY + dy, ' ', Fg);
+                for (int dy = 0; dy < h; dy++) grid.Put(barX + i, barY + dy, ' ', _fg);
                 if (i < filled)
                 {
-                    grid.Put(barX + i, barY, '█', Fg);
-                    grid.Put(barX + i, barY + 1, '█', Fg);
+                    grid.Put(barX + i, barY, '█', _fg);
+                    grid.Put(barX + i, barY + 1, '█', _fg);
                 }
             }
-            else grid.Put(barX + i, barY, i < filled ? '=' : ' ', Fg);
+            else grid.Put(barX + i, barY, i < filled ? '=' : ' ', _fg);
         }
         x += inner;
 
@@ -173,14 +219,14 @@ public sealed class VcrOverlay : IOverlay
     /// Выводит строку с (x, y). Крупно — пиксельным шрифтом (3×3 клетки на символ, шаг 4, интервал пустой),
     /// мелко — по одной клетке на символ. Возвращает сдвиг курсора в клетках. Что за границей — обрезается.
     /// </summary>
-    private static int Emit(CharGrid grid, int x, int y, ReadOnlySpan<char> s, bool big)
+    private int Emit(CharGrid grid, int x, int y, ReadOnlySpan<char> s, bool big)
     {
         int start = x;
         foreach (char c in s)
         {
             if (!big)
             {
-                grid.Put(x, y, c, Fg);
+                grid.Put(x, y, c, _fg);
                 x++;
                 continue;
             }
@@ -189,10 +235,10 @@ public sealed class VcrOverlay : IOverlay
                 for (int cx = 0; cx < PixelFont.CellsW; cx++)
                 {
                     int b = bits[cy * PixelFont.CellsW + cx];
-                    grid.Put(x + cx, y + cy, b == 0 ? ' ' : GlyphSet.Sextant(b), Fg);
+                    grid.Put(x + cx, y + cy, b == 0 ? ' ' : GlyphSet.Sextant(b), _fg);
                 }
             // межбуквенный интервал — пустой столбец клеток, чтобы сцена не просвечивала между буквами
-            for (int cy = 0; cy < PixelFont.CellsH; cy++) grid.Put(x + PixelFont.CellsW, y + cy, ' ', Fg);
+            for (int cy = 0; cy < PixelFont.CellsH; cy++) grid.Put(x + PixelFont.CellsW, y + cy, ' ', _fg);
             x += PixelFont.Advance;
         }
         return x - start;

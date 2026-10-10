@@ -91,8 +91,9 @@ public sealed class OsdOutline : IDisposable
 }
 
 /// <summary>
-/// OSD видика одного монитора: своя сетка OsdGeometry.Rows строк (буквы одного размера на всех сценах),
-/// прозрачный рендер глифов, контур шейдером, альфа-композит поверх выхода сцены — до фильтров, чтобы VHS рвал и OSD.
+/// OSD видика одного монитора: своя сетка из OsdGeometry.RowsFor(style, size) строк (буквы одного размера на всех сценах),
+/// прозрачный рендер глифов, контур шейдером (stroke px на 1080 строк; 0 — без контура), альфа-композит поверх выхода сцены —
+/// до фильтров, чтобы VHS рвал и OSD. Шрифт — overlay.params.vcr.font (пусто — шрифт сетки).
 /// Если видик ничего не показывает в этом кадре — слой не рисуется вовсе.
 /// </summary>
 internal sealed class OsdLayer : IDisposable
@@ -102,19 +103,27 @@ internal sealed class OsdLayer : IDisposable
     private readonly RenderTarget _glyphs;
     private readonly RenderTarget _outline;
     private readonly OsdOutline _pass;
+    private readonly float _stroke;
 
     public int Cols => _grid.Cols;
     public int Rows => _grid.Rows;
 
     public OsdLayer(Shared s, int vpW, int vpH)
     {
-        var font = s.FontFor(OsdGeometry.CellHeight(vpH));
+        var opts = s.Config.OverlayOptionsFor("vcr");
+        string style = opts.GetString("style", "pixel");
+        float size = opts.GetFloat("size", 1f);
+        _stroke = Math.Max(0f, opts.GetFloat("stroke", 2f));
+        string family = opts.GetString("font", "");
+        int rows = OsdGeometry.RowsFor(style, size);
+
+        var font = s.FontFor(OsdGeometry.CellHeight(vpH, rows), family, 128);
         int cw = font.Atlas.CellWidth, ch = font.Atlas.CellHeight;
         int cols = OsdGeometry.Cols(vpW, cw);
-        _grid = new CharGrid(cols, OsdGeometry.Rows);
+        _grid = new CharGrid(cols, rows);
         _renderer = new GridRenderer(s.Gl, font.Atlas);
-        _glyphs = new RenderTarget(s.Gl, cols * cw, OsdGeometry.Rows * ch);
-        _outline = new RenderTarget(s.Gl, cols * cw, OsdGeometry.Rows * ch);
+        _glyphs = new RenderTarget(s.Gl, cols * cw, rows * ch);
+        _outline = new RenderTarget(s.Gl, cols * cw, rows * ch);
         _pass = new OsdOutline(s.Gl);
     }
 
@@ -124,9 +133,13 @@ internal sealed class OsdLayer : IDisposable
         if (!vcr.IsVisible(ctx.Organism.Fatigue)) return;
         vcr.Apply(_grid, ctx);
         _renderer.RenderGlyphs(_grid, _glyphs);
-        // Обводка 2 px на 1080 строк, масштаб по высоте кадра
-        _pass.Stroke(_glyphs.Texture, _outline, 2f * target.Height / 1080f);
-        _pass.Blend(_outline.Texture, target);
+        if (_stroke > 0f)
+        {
+            // Обводка stroke px на 1080 строк, масштаб по высоте кадра
+            _pass.Stroke(_glyphs.Texture, _outline, _stroke * target.Height / 1080f);
+            _pass.Blend(_outline.Texture, target);
+        }
+        else _pass.Blend(_glyphs.Texture, target);   // stroke 0: только глифы, без контура
     }
 
     public void Dispose()

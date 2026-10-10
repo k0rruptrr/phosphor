@@ -42,8 +42,11 @@ public class TvFilterTests
     public void Params_NamesDefaultsAndOptions()
     {
         var ps = new TvFilter().Params;
-        Assert.Equal(new[] { "mode", "amount", "hue", "sharpness", "saturation", "fires", "signal", "edge" },
+        Assert.Equal(new[] { "mode", "amount", "hue", "sharpness", "saturation", "fires", "fireSize", "signal", "edge" },
             ps.Select(p => p.Name).ToArray());
+        Assert.Equal(1f, ps[6].Default);
+        Assert.Equal(0.3f, ps[6].Min);
+        Assert.Equal(2.5f, ps[6].Max);
         var mode = ps[0];
         Assert.Equal(new[] { "pal", "secam", "ntsc" }, mode.Options);
         Assert.Equal(0f, mode.Default);
@@ -653,6 +656,63 @@ public class TvFilterTests
         float cy = HalfCrossing(yv, W / 2);
         float cc = HalfCrossing(crv, W / 2);
         Assert.True(cc > cy, $"центр перехода Cr {cc:F1} не правее центра Y {cy:F1}");
+    }
+
+    // Средняя длина подряд идущих пикселей с цветностью выше порога по всем строкам кадра.
+    private static double MeanChromaRun(float[,,] img, int h, int w, float thr)
+    {
+        double total = 0;
+        int runs = 0;
+        for (int y = 8; y < h - 8; y++)
+        {
+            int run = 0;
+            for (int x = 64; x < w - 64; x++)
+            {
+                if (Chroma(img, x, y) > thr) run++;
+                else if (run > 0) { total += run; runs++; run = 0; }
+            }
+            if (run > 0) { total += run; runs++; }
+        }
+        return runs == 0 ? 0 : total / runs;
+    }
+
+    [Fact]
+    public void Secam_FireSize25_FlaresAreLongerThanAt1()
+    {
+        // Сетка глифов (много краёв), signal=1, fires=1: факелы от каждого сегмента с краем. Длина факела ∝ fireSize.
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (x % 16 < 6 && y % 16 < 12) ? (1f, 1f, 1f) : (0f, 0f, 0f));
+        using var f = gpu.Create<TvFilter>();
+        var base1 = new Dictionary<string, float>(Secam(fires: 1f)) { ["fireSize"] = 1f };
+        var big = new Dictionary<string, float>(Secam(fires: 1f)) { ["fireSize"] = 2.5f };
+
+        double len1 = MeanChromaRun(gpu.Run(f, 0, base1), H, W, 0.05f);
+        double len25 = MeanChromaRun(gpu.Run(f, 0, big), H, W, 0.05f);
+        Assert.True(len1 > 0, "при fireSize=1 нет факелов");
+        Assert.True(len25 >= 1.5 * len1, $"средняя длина факела: при 2.5 {len25:F1} px, при 1 {len1:F1} px");
+    }
+
+    [Fact]
+    public void Secam_EdgeZero_NoGreenInTop3Percent()
+    {
+        // Серый вход, edge=0: верхние 3% кадра без зелёного оттенка (обратная проверка к Secam_EdgeBand_GreenStripeAtTopEdge).
+        const int HB = 1080;
+        using var gpu = new GpuHarness(W, HB);
+        gpu.SetInput((x, y) => (0.5f, 0.5f, 0.5f));
+        using var f = gpu.Create<TvFilter>();
+        var img = gpu.Run(f, 0, Secam(edge: 0f));
+        int rows = (int)(0.03 * HB);
+        double g = 0, rb = 0;
+        int n = 0;
+        for (int y = 0; y < rows; y++)
+        for (int x = 0; x < W; x++)
+        {
+            g += img[y, x, 1];
+            rb += Math.Max(img[y, x, 0], img[y, x, 2]);
+            n++;
+        }
+        double excess = g / n - rb / n;
+        Assert.True(excess < 0.02, $"верхние 3% кадра: G − max(R,B) = {excess:F4} при edge=0");
     }
 
     // Положение 50%-точки перехода между средними уровнями слева и справа от центра (дробный пиксель).

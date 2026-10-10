@@ -25,6 +25,10 @@ internal static class Program
             return 2;
         }
         log.Info($"PHOSPHOR {AppInfo.Display} {args.Mode} argv=[{string.Join(' ', argv)}]");
+        // --overlay: hud — env PHOSPHOR_OVERLAY (его читают PickOverlay, Director и Shot); vcr — флаг видика (читает Shared)
+        if (string.Equals(args.Overlay, "hud", StringComparison.Ordinal)) Environment.SetEnvironmentVariable("PHOSPHOR_OVERLAY", "hud");
+        else if (string.Equals(args.Overlay, "vcr", StringComparison.Ordinal)) Environment.SetEnvironmentVariable("PHOSPHOR_VCR_FORCE", "1");
+        else if (args.Overlay is not null) log.Warn($"--overlay: неизвестный оверлей '{args.Overlay}' (есть: hud, vcr)");
 
         try
         {
@@ -35,17 +39,22 @@ internal static class Program
             var config = PhosphorConfig.Load(cfgPath, warnings);
             foreach (var w in warnings) log.Warn(w);
 
-            // Старый конфиг: новые сцены из обновления включаются сами и запоминаются (не для --shot и превью)
+            // Геометрия кинескопа ушла из пресетов в экран (screen): убираем старые ключи crt в памяти во всех режимах
+            var notes = new List<string>();
+            bool screenMigrated = config.MigrateScreen(notes);
+            // Старый конфиг: новые сцены из обновления включаются сами и запоминаются (не для --shot и превью).
+            // Файл сохраняется только в этих режимах; миграция экрана сохраняется вместе с ними.
             if (args.Mode is LaunchMode.Screensaver or LaunchMode.Windowed or LaunchMode.Configure)
             {
-                var notes = new List<string>();
-                if (config.MigrateScenes(Catalog.Scenes().Ids, notes))
+                bool scenesMigrated = config.MigrateScenes(Catalog.Scenes().Ids, notes);
+                if (scenesMigrated || screenMigrated)
                 {
                     foreach (var n in notes) log.Info("конфиг: " + n);
                     try { config.Save(cfgPath); log.Info("конфиг: сохранён " + cfgPath); }
                     catch (Exception e) { log.Warn($"конфиг: не удалось сохранить ({e.Message}), работаю с мигрированным в памяти"); }
                 }
             }
+            else foreach (var n in notes) log.Info("конфиг: " + n);
 
             return args.Mode switch
             {
@@ -102,6 +111,8 @@ internal static class Program
         var slots = BuildSlots(win, args, shared, cellH);
         // Шлейф (screen.trail): свой буфер на слот; при trail = 0 ничего не выделяется и не рисуется
         var trails = slots.Select(_ => new TrailBuffer(gl)).ToList();
+        // Корпус монитора (screen.*): свой проход на слот, после шлейфа
+        var screens = slots.Select(_ => new ScreenPass(gl)).ToList();
         var outs = new uint[slots.Count];
         // --scene / --preset в /w фиксируют сцену/пресет (разработка); в /s и /p дирижёр свободен.
         var director = new Director(shared, slots, lockScene: args.Scene is not null, lockPreset: args.Preset is not null);
@@ -204,6 +215,7 @@ internal static class Program
                 var s = slots[i];
                 trails[i].Resize(s.VpW, s.VpH);
                 outs[i] = trails[i].Apply(s.Output, config.Screen.Trail);
+                outs[i] = screens[i].Apply(outs[i], s.VpW, s.VpH, config.Screen);
                 presenter.Draw(outs[i], 0, s.VpX, s.VpY, s.VpW, s.VpH, gains[i]);
             }
             win.SwapBuffers();
@@ -221,6 +233,7 @@ internal static class Program
         }
 
         foreach (var t in trails) t.Dispose();
+        foreach (var sp in screens) sp.Dispose();
         foreach (var s in slots) s.Dispose();
         log.Info("выход");
         return 0;

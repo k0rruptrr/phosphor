@@ -15,17 +15,25 @@ public sealed class SettingsSpecs
     /// <summary>Параметры сцены по id; null — сцена не реализует ISceneParams.</summary>
     public Func<string, IReadOnlyList<SceneParamSpec>?> Scene { get; }
 
-    public SettingsSpecs(Func<string, IReadOnlyList<ParamSpec>?> filter, Func<string, IReadOnlyList<SceneParamSpec>?> scene)
+    /// <summary>Параметры оверлея по id (IOverlayParams.Params); null — оверлей не реализует IOverlayParams.</summary>
+    public Func<string, IReadOnlyList<SceneParamSpec>?> Overlay { get; }
+
+    public SettingsSpecs(
+        Func<string, IReadOnlyList<ParamSpec>?> filter,
+        Func<string, IReadOnlyList<SceneParamSpec>?> scene,
+        Func<string, IReadOnlyList<SceneParamSpec>?>? overlay = null)
     {
         Filter = filter;
         Scene = scene;
+        Overlay = overlay ?? (_ => null);
     }
 
-    /// <summary>Из каталога приложения. Реестры создаются при первом обращении; фильтры и сцены создаются без Init (GL не нужен).</summary>
+    /// <summary>Из каталога приложения. Реестры создаются при первом обращении; фильтры, сцены и оверлеи создаются без Init (GL не нужен).</summary>
     public static SettingsSpecs FromCatalog()
     {
         var filters = new Lazy<FilterRegistry>(() => Catalog.Filters());
         var scenes = new Lazy<SceneRegistry>(() => Catalog.Scenes());
+        var overlays = new Lazy<IReadOnlyDictionary<string, Func<IOverlay>>>(() => Catalog.Overlays());
         return new SettingsSpecs(
             id =>
             {
@@ -39,6 +47,13 @@ public sealed class SettingsSpecs
                 var scene = scenes.Value.Create(id);
                 try { return (scene as ISceneParams)?.Params; }
                 finally { (scene as IDisposable)?.Dispose(); }
+            },
+            id =>
+            {
+                if (!overlays.Value.TryGetValue(id, out var make)) return null;
+                var overlay = make();
+                try { return (overlay as IOverlayParams)?.Params; }
+                finally { (overlay as IDisposable)?.Dispose(); }
             });
     }
 }

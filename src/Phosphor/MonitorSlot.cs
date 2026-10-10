@@ -28,18 +28,33 @@ internal sealed class Shared(GL gl, PhosphorConfig config, SceneRegistry scenes,
     /// <summary>Шаги обработки сетки (до GPU-фильтров), по id.</summary>
     public IReadOnlyDictionary<string, Func<IGridPass>> GridPasses { get; init; } = new Dictionary<string, Func<IGridPass>>();
 
-    private readonly Dictionary<int, Font> _fonts = new();
+    private readonly Dictionary<(int Size, string Family), Font> _fonts = new();
 
-    /// <summary>Шрифт заданной высоты ячейки (8..64). Атласы кешируются: строятся один раз на размер.</summary>
-    public Font FontFor(int cellHeightPx)
+    /// <summary>
+    /// Видик включён принудительно (--overlay vcr, env PHOSPHOR_VCR_FORCE=1): OSD на любом пресете, в режиме Demo,
+    /// даже при overlay.vcr=false. Задаётся хостом до создания слотов.
+    /// </summary>
+    public bool VcrForced { get; } = Environment.GetEnvironmentVariable("PHOSPHOR_VCR_FORCE") == "1";
+
+    /// <summary>Шрифт по умолчанию: высота ячейки 8..64, семейство — text.font.</summary>
+    public Font FontFor(int cellHeightPx) => FontFor(cellHeightPx, null, 64);
+
+    /// <summary>
+    /// Шрифт заданной высоты ячейки (8..maxPx) и семейства (null/пусто — text.font). Атласы кешируются по (размер, семейство).
+    /// </summary>
+    public Font FontFor(int cellHeightPx, string? family, int maxPx = 64)
     {
-        cellHeightPx = Math.Clamp(cellHeightPx, 8, 64);
-        if (_fonts.TryGetValue(cellHeightPx, out var f)) return f;
-        var atlas = GlyphAtlas.Build(Gl, cellHeightPx, Config.Text.Font, m => Log.Warn(m));
-        if (atlas.Missing.Count > 0) Log.Warn($"атлас {cellHeightPx}px: нет глифов {new string(atlas.Missing.ToArray())}");
+        // Растеризатор (GlyphRasterizer) пока принимает 8..64; выше — исключение. Поэтому кламп не выше 64,
+        // даже если запрошено maxPx = 128. Когда предел растеризатора поднимут — убрать Math.Min.
+        cellHeightPx = Math.Clamp(cellHeightPx, 8, Math.Min(64, Math.Max(8, maxPx)));
+        string fam = string.IsNullOrWhiteSpace(family) ? Config.Text.Font : family.Trim();
+        var key = (cellHeightPx, fam);
+        if (_fonts.TryGetValue(key, out var f)) return f;
+        var atlas = GlyphAtlas.Build(Gl, cellHeightPx, fam, m => Log.Warn(m));
+        if (atlas.Missing.Count > 0) Log.Warn($"атлас {cellHeightPx}px {fam}: нет глифов {new string(atlas.Missing.ToArray())}");
         f = new Font(atlas, new GridRenderer(Gl, atlas));
-        _fonts[cellHeightPx] = f;
-        Log.Info($"атлас {cellHeightPx}px: ячейка {atlas.CellWidth}x{atlas.CellHeight}");
+        _fonts[key] = f;
+        Log.Info($"атлас {cellHeightPx}px {fam}: ячейка {atlas.CellWidth}x{atlas.CellHeight}");
         return f;
     }
 
@@ -90,9 +105,12 @@ internal sealed class MonitorSlot : IDisposable
         _current = new SceneLayer(s, index, vpW, vpH, sceneId, preset, defaultCellHeight, overlayId, null);
 
         // OSD видика не берёт rng, чтобы не сдвигать последовательность для остальных слоёв
-        if (s.Config.Overlay.Vcr && s.Overlays.TryGetValue("vcr", out var makeVcr) && makeVcr() is VcrOverlay vcr)
+        if ((s.Config.Overlay.Vcr || s.VcrForced) && s.Overlays.TryGetValue("vcr", out var makeVcr) && makeVcr() is VcrOverlay vcr)
         {
             _vcr = vcr;
+            _vcr.Demo = s.VcrForced;
+            // Параметры видика (overlay.params.vcr) — до Init: от них зависят строки и размер сетки OSD
+            if (_vcr is IOverlayParams op) op.Configure(s.Config.OverlayOptionsFor(_vcr.Id));
             _osd = new OsdLayer(s, vpW, vpH);
             _vcr.Init(_osd.Cols, _osd.Rows, new Random(index));
         }

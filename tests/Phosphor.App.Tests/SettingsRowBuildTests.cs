@@ -46,7 +46,7 @@ public class SettingsRowBuildTests
         var failures = new List<string>();
         OnSta(() =>
         {
-            var log = new Phosphor.App.Log();
+            using var log = new Phosphor.App.Log();
             var specs = SettingsSpecs.FromCatalog();
             var cfg = Defaults();
             var model = new SettingsModel(cfg, Catalog.Scenes().Ids, specs);
@@ -79,7 +79,7 @@ public class SettingsRowBuildTests
         var failures = new List<string>();
         OnSta(() =>
         {
-            var log = new Phosphor.App.Log();
+            using var log = new Phosphor.App.Log();
             var specs = SettingsSpecs.FromCatalog();
             var cfg = Defaults();
             var model = new SettingsModel(cfg, Catalog.Scenes().Ids, specs);
@@ -103,6 +103,89 @@ public class SettingsRowBuildTests
                             failures.Add($"фильтр «{filterId}», {where} [{spec.Min}..{spec.Max}]: {e.GetType().Name}: {e.Message}");
                         }
                     }
+            }
+        });
+        Assert.Empty(failures);
+    }
+
+    [Fact]
+    public void EveryScreenParam_BuildsRow_AtDefaultMinMax_WithoutException()
+    {
+        var failures = new List<string>();
+        OnSta(() =>
+        {
+            using var log = new Phosphor.App.Log();
+            var cfg = Defaults();
+            var model = new SettingsModel(cfg, Catalog.Scenes().Ids, SettingsSpecs.FromCatalog());
+            using var form = SettingsForm.CreateForProbe(model, log);
+            foreach (var spec in ScreenConfig.Specs)
+                foreach (var (where, value) in Values(spec.Name, spec.Default, spec.Min, spec.Max))
+                {
+                    try
+                    {
+                        model.SetScreenParam(spec.Name, value);
+                        using var row = form.ProbeScreenParamRow(spec);
+                    }
+                    catch (Exception e)
+                    {
+                        failures.Add($"экран «{spec.Name}», {where} [{spec.Kind}, {spec.Min}..{spec.Max}]: {e.GetType().Name}: {e.Message}");
+                    }
+                }
+        });
+        Assert.Empty(failures);
+    }
+
+    /// <summary>Фейковые описания оверлея: по одному параметру каждого вида (каталог оверлеев пока может не отдавать параметров).</summary>
+    private static readonly IReadOnlyList<SceneParamSpec> FakeOverlayParams = new[]
+    {
+        new SceneParamSpec("accent", SceneParamKind.Choice, 0, 0, 3, "цвет акцента", new[] { "orange", "cyan", "green", "white" }),
+        new SceneParamSpec("targets", SceneParamKind.Int, 4, 0, 4, "рамки трекинга"),
+        new SceneParamSpec("stats", SceneParamKind.Bool, 1, 0, 1, "блок статистики"),
+        new SceneParamSpec("stroke", SceneParamKind.Float, 2, 0, 4, "толщина"),
+    };
+
+    [Fact]
+    public void EveryOverlayParam_AndOverlayRows_BuildAtDefaultMinMax_WithoutException()
+    {
+        var failures = new List<string>();
+        OnSta(() =>
+        {
+            using var log = new Phosphor.App.Log();
+            var cfg = Defaults();
+            var specs = new SettingsSpecs(_ => null, _ => null, id => id == "hud" ? FakeOverlayParams : null);
+            var model = new SettingsModel(cfg, Catalog.Scenes().Ids, specs);
+            using var form = SettingsForm.CreateForProbe(model, log);
+            foreach (var spec in FakeOverlayParams)
+                foreach (var (where, value) in Values(spec.Name, spec.Default, spec.Min, spec.Max))
+                {
+                    try
+                    {
+                        model.SetOverlayParam("hud", spec, value);
+                        using var row = form.ProbeOverlayParamRow("hud", spec);
+                    }
+                    catch (Exception e)
+                    {
+                        failures.Add($"оверлей «hud», {where} [{spec.Kind}, {spec.Min}..{spec.Max}]: {e.GetType().Name}: {e.Message}");
+                    }
+                }
+            // Строки HUD (вероятность) и VCR (шрифт OSD) — при крайних значениях
+            foreach (var p in new[] { 0.0, 0.4, 1.0 })
+            {
+                try
+                {
+                    model.OverlayProbability = p;
+                    using var row = form.ProbeOverlayProbabilityRow();
+                }
+                catch (Exception e) { failures.Add($"вероятность {p}: {e.GetType().Name}: {e.Message}"); }
+            }
+            foreach (var font in new[] { "", "НеСуществующий шрифт" })
+            {
+                try
+                {
+                    model.SetOverlayFont(font);
+                    using var row = form.ProbeOsdFontRow();
+                }
+                catch (Exception e) { failures.Add($"шрифт OSD «{font}»: {e.GetType().Name}: {e.Message}"); }
             }
         });
         Assert.Empty(failures);

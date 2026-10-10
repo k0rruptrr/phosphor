@@ -25,8 +25,12 @@ internal sealed class SettingsForm : Form
     private const int PrevX = 632, PrevY = 40;
     // Строки параметров (ширина панели 480, содержимое 464): подписи | контрол | значение | «по умолчанию»
     private const int MaxLabelCol = 264, ValueX = 376, ValueW = 56, ControlEnd = 368, ResetX = 436;
+    /// <summary>Колонка подписей в левой части страниц «Экран» и «Оверлеи» (шире: там нет колонки под превью).</summary>
+    private const int LeftLabelCol = 330;
     /// <summary>Ширина колонки подписей текущей группы строк (см. LabelColumn).</summary>
     private int _labelCol = 150;
+    /// <summary>Геометрия строк параметров: колонка под превью (по умолчанию) или левая часть страницы (экран, оверлеи).</summary>
+    private int _valueX = ValueX, _resetX = ResetX, _controlEnd = ControlEnd;
 
     private readonly SettingsModel _model;
     private readonly string _cfgPath;
@@ -47,16 +51,22 @@ internal sealed class SettingsForm : Form
     private readonly PickList _presets;
     private readonly ComboBox _activePreset = new();
     private readonly CheckBox _presetFavOnly = new();
+    // Оверлеи
+    private readonly PickList _overlays;
     // Перебор
     private readonly CheckBox _shufScenes = new(), _shufPresets = new(), _perMonitor = new(), _beatSync = new();
-    private readonly NumBox _interval = new(), _transSec = new(), _overlayPct = new();
+    private readonly NumBox _interval = new(), _transSec = new();
     private readonly ComboBox _transition = new();
-    private readonly SliderBox _trail = new();
-    private readonly Label _trailValue = new();
-    // Параметры под превью (сцена на вкладке «Сцены», пресет на «Фильтрах»)
+    // Параметры под превью (сцена на вкладке «Сцены», пресет на «Эффектах», оверлей на «Оверлеях», экран на «Экране»)
     private readonly Label _paramsTitle = new();
     private readonly ParamsPanel _params = new();
     private readonly Button _sceneResetAll = new();
+    private readonly Button _screenResetAll = new();
+    // Левая часть страниц «Экран» и «Оверлеи»: строки параметров без скролла, кнопка сброса внизу
+    private readonly Panel _screenRows = new();
+    private readonly Panel _overlayRows = new();
+    private readonly Button _overlayResetAll = new();
+    private readonly RadioButton _screenCrt = new(), _screenFlat = new();
     private readonly Button _presetSaveAs = new(), _presetBuiltin = new(), _presetDelete = new();
     // Диммер
     private readonly CheckBox _dimEnabled = new(), _dimHw = new();
@@ -80,10 +90,16 @@ internal sealed class SettingsForm : Form
     private string _previewScene = "";
     /// <summary>Пресет, который редактируется и показывается в превью (выбран в списке или активный). null — shuffle.</summary>
     private string? _editPreset;
-    /// <summary>Ключ, по которому построены строки параметров (вкладка|сцена|пресет): меняется — строки пересобираются.</summary>
+    /// <summary>Оверлей, выбранный в списке «Оверлеи»: его параметры под превью и --overlay для превью.</summary>
+    private string? _editOverlay = SettingsModel.OverlayIds[0];
+    /// <summary>Ключ, по которому построены строки параметров (вкладка|сцена|пресет|оверлей): меняется — строки пересобираются.</summary>
     private string _paramsKey = "";
     /// <summary>Программная установка значений: события комбобоксов и списков не пишут в конфиг.</summary>
     private bool _loading;
+
+    /// <summary>Индексы вкладок (порядок BuildTabs). Имена для --tab — TabIds.</summary>
+    private const int TabScenes = 0, TabEffects = 1, TabOverlays = 2, TabScreen = 3;
+    private static readonly string[] TabIds = { "scenes", "filters", "overlays", "screen", "shuffle", "dimmer", "network", "font", "about" };
 
     private static readonly Choice[] TransitionChoices =
     {
@@ -102,6 +118,10 @@ internal sealed class SettingsForm : Form
 
         _scenes = new PickList(_model.GetScene, id => { _model.CycleScene(id); RefreshScenesAfterChange(id); });
         _presets = new PickList(_model.GetPreset, name => { _model.CyclePreset(name); UpdatePreview(); }, _model.IsPresetModified);
+        _overlays = new PickList(_model.GetOverlay, id => { _model.ToggleOverlay(id); _overlays.Invalidate(); UpdatePreview(); })
+        {
+            Caption = SettingsModel.OverlayTitle,
+        };
 
         Text = "PHOSPHOR — настройки";
         try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
@@ -139,6 +159,7 @@ internal sealed class SettingsForm : Form
         FormClosing += OnFormClosing;
         _scenes.SelectionChanged += (_, _) => OnScenesSelection();
         _presets.SelectionChanged += (_, _) => OnPresetsSelection();
+        _overlays.SelectionChanged += (_, _) => OnOverlaySelection();
         _tabs.SelectedIndexChanged += (_, _) => UpdatePreview();
         _editPreset = ActivePresetName();
         if (_editPreset is not null) _presets.SelectId(_editPreset);
@@ -152,12 +173,15 @@ internal sealed class SettingsForm : Form
         _tabs.Location = new Point(TabsX, TabsY);
         _tabs.Size = new Size(TabsW, TabsH);
         _tabs.Add("Сцены", Page(BuildScenesPage));
-        _tabs.Add("Фильтры", Page(BuildFiltersPage));
+        _tabs.Add("Эффекты", Page(BuildFiltersPage));
+        _tabs.Add("Оверлеи", Page(BuildOverlaysPage));
+        _tabs.Add("Экран", Page(BuildScreenPage));
         _tabs.Add("Перебор", Page(BuildShufflePage));
         _tabs.Add("Диммер", Page(BuildDimmerPage));
         _tabs.Add("Сеть", Page(BuildNetworkPage));
         _tabs.Add("Шрифт", Page(BuildFontPage));
-        _tabs.Add("О программе", Page(BuildAboutPage));
+        // «О программе» не влезает в полоску из девяти вкладок (обрезается) — короткое «Инфо»
+        _tabs.Add("Инфо", Page(BuildAboutPage));
     }
 
     private static Panel Page(Action<Panel> fill)
@@ -214,6 +238,68 @@ internal sealed class SettingsForm : Form
         p.Controls.Add(_presets);
     }
 
+    private void BuildOverlaysPage(Panel p)
+    {
+        _overlays.Location = new Point(12, 12);
+        _overlays.Size = new Size(568, 60);
+        _overlays.Fill(SettingsModel.OverlayIds);
+        _overlays.SelectId(_editOverlay ?? SettingsModel.OverlayIds[0]);
+        p.Controls.Add(_overlays);
+        Place(p, Lbl("клик или Space: выкл → вкл. Ниже — параметры выбранной строки.", Theme.Muted), 12, 84);
+        _overlayRows.Location = new Point(0, 112);
+        _overlayRows.Size = new Size(600, 360);
+        _overlayRows.BackColor = Theme.Bg;
+        p.Controls.Add(_overlayRows);
+        _overlayResetAll.Text = "все по умолчанию";
+        _overlayResetAll.Location = new Point(12, 478);
+        _overlayResetAll.Size = new Size(210, 26);
+        _overlayResetAll.Click += (_, _) => OnResetAll();
+        p.Controls.Add(_overlayResetAll);
+    }
+
+    /// <summary>
+    /// Страница «Экран»: пояснение (одной строкой, приглушённо), переключатель «кинескоп / плоский экран»,
+    /// группы параметров (ScreenConfig.Specs) без скролла, «вернуть всё» внизу. Колонка под превью не нужна.
+    /// </summary>
+    private void BuildScreenPage(Panel p)
+    {
+        var note = Lbl("Корпус монитора: одинаков для всех эффектов. Эффекты — сигнал, экран — железо.", Theme.Muted);
+        note.Tag = new Font(Theme.Mono.FontFamily, 8.5f, FontStyle.Regular, GraphicsUnit.Point); // Theme.Apply берёт шрифт из Tag
+        Place(p, note, 12, 10);
+
+        _screenCrt.Text = "кинескоп";
+        _screenFlat.Text = "плоский экран";
+        _screenCrt.AutoSize = _screenFlat.AutoSize = true;
+        _screenCrt.Location = new Point(12, 36);
+        _screenFlat.Location = new Point(150, 36);
+        _screenCrt.Checked = _model.ScreenEnabled;
+        _screenFlat.Checked = !_model.ScreenEnabled;
+        _screenCrt.CheckedChanged += (_, _) => { if (_screenCrt.Checked) OnScreenKindChanged(); };
+        _screenFlat.CheckedChanged += (_, _) => { if (_screenFlat.Checked) OnScreenKindChanged(); };
+        p.Controls.Add(_screenCrt);
+        p.Controls.Add(_screenFlat);
+
+        _screenRows.Location = new Point(0, 64);
+        _screenRows.Size = new Size(600, 404);
+        _screenRows.BackColor = Theme.Bg;
+        p.Controls.Add(_screenRows);
+
+        _screenResetAll.Text = "вернуть всё";
+        _screenResetAll.Location = new Point(12, 478);
+        _screenResetAll.Size = new Size(210, 26);
+        _screenResetAll.Click += (_, _) => { _model.ResetScreen(); RebuildScreenRows(); UpdatePreview(); };
+        p.Controls.Add(_screenResetAll);
+    }
+
+    /// <summary>Переключатель «кинескоп / плоский экран»: меняет Screen.Enabled; значения полей не трогаются.</summary>
+    private void OnScreenKindChanged()
+    {
+        if (_loading) return;
+        _model.ScreenEnabled = _screenCrt.Checked;
+        RebuildScreenRows();
+        UpdatePreview();
+    }
+
     private void BuildShufflePage(Panel p)
     {
         Check(p, _shufScenes, "менять сцены", 12, 12);
@@ -232,22 +318,7 @@ internal sealed class SettingsForm : Form
 
         Check(p, _perMonitor, "разные сцены на мониторах", 12, 198);
         Check(p, _beatSync, "смена в такт музыке", 12, 232);
-
-        Place(p, Lbl("вероятность HUD-оверлея, %"), 12, 270);
-        Num(p, _overlayPct, 0, 100, 0, LabelCol(ShuffleLabels), 266, 90);
-
-        Place(p, Lbl("шлейф (моушн-блюр)"), 12, 310);
-        _trail.SetRange(0f, 0.9f, _trail.Value);
-        _trail.Size = new Size(260, 24);
-        _trail.Location = new Point(LabelCol(ShuffleLabels), 306);
-        _trail.ValueChanged += (_, _) => { _model.Config.Screen.Trail = _trail.Value; ShowTrail(); UpdatePreview(); };
-        p.Controls.Add(_trail);
-        _trailValue.AutoSize = true;
-        _trailValue.Location = new Point(LabelCol(ShuffleLabels) + 270, 310);
-        p.Controls.Add(_trailValue);
     }
-
-    private void ShowTrail() => _trailValue.Text = _trail.Value.ToString("0.00", CultureInfo.InvariantCulture);
 
     private void BuildDimmerPage(Panel p)
     {
@@ -457,7 +528,7 @@ internal sealed class SettingsForm : Form
         _sceneResetAll.Text = "все по умолчанию";
         _sceneResetAll.Location = new Point(PrevX, 512);
         _sceneResetAll.Size = new Size(210, 26);
-        _sceneResetAll.Click += (_, _) => { if (_previewScene.Length > 0) { _model.ResetSceneParams(_previewScene); RebuildParams(); UpdatePreview(); } };
+        _sceneResetAll.Click += (_, _) => OnResetAll();
 
         _presetSaveAs.Text = "Сохранить как…";
         _presetSaveAs.Location = new Point(PrevX, 512);
@@ -516,9 +587,6 @@ internal sealed class SettingsForm : Form
         _transSec.Value = Clamp(c.Shuffle.TransitionSec, 0, 10);
         _perMonitor.Checked = c.Shuffle.PerMonitor;
         _beatSync.Checked = c.Shuffle.BeatSync;
-        _overlayPct.Value = Clamp(c.Overlay.Probability * 100, 0, 100);
-        _trail.Value = Math.Clamp(c.Screen.Trail, 0f, 0.9f);
-        ShowTrail();
 
         _dimEnabled.Checked = c.Dimmer.Enabled;
         _dimDelay.Value = Clamp(c.Dimmer.DelayMin, 0, 240);
@@ -548,8 +616,6 @@ internal sealed class SettingsForm : Form
         c.Shuffle.TransitionSec = (float)_transSec.Value;
         c.Shuffle.PerMonitor = _perMonitor.Checked;
         c.Shuffle.BeatSync = _beatSync.Checked;
-        c.Overlay.Probability = (double)_overlayPct.Value / 100.0;
-        c.Screen.Trail = _trail.Value;
 
         c.Dimmer.Enabled = _dimEnabled.Checked;
         c.Dimmer.DelayMin = (float)_dimDelay.Value;
@@ -571,7 +637,7 @@ internal sealed class SettingsForm : Form
         if (problem is not null)
         {
             MessageBox.Show(this, problem, "PHOSPHOR", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            _tabs.SelectedIndex = problem.Contains("сцен") ? 0 : 1;
+            _tabs.SelectedIndex = problem.Contains("сцен") ? TabScenes : TabEffects;
             return;
         }
         ReadControls();
@@ -623,11 +689,40 @@ internal sealed class SettingsForm : Form
         string? chosen = _editPreset ?? (_activePreset.SelectedItem as Choice)?.Value;
         string? preset = _model.PreviewPreset(chosen);
         _previewCaption.Text = $"превью · {_previewScene} · {preset ?? "—"}";
-        if (_previewScene.Length > 0) _preview.Request(_previewScene, preset);
+        // --overlay — только на вкладке «Оверлеи»: превью показывает выбранный оверлей
+        string? overlay = _tabs.SelectedIndex == TabOverlays ? _editOverlay : null;
+        if (_previewScene.Length > 0) _preview.Request(_previewScene, preset, overlay);
         if (CurrentParamsKey() != _paramsKey) RebuildParams();
     }
 
-    private string CurrentParamsKey() => $"{_tabs.SelectedIndex}|{_previewScene}|{_editPreset}";
+    private string CurrentParamsKey() => $"{_tabs.SelectedIndex}|{_previewScene}|{_editPreset}|{_editOverlay}";
+
+    /// <summary>Выбор строки в списке «Оверлеи»: её параметры — под превью, превью показывает её.</summary>
+    private void OnOverlaySelection()
+    {
+        if (_overlays.SelectedId is null) return;
+        _editOverlay = _overlays.SelectedId;
+        UpdatePreview();
+    }
+
+    /// <summary>«Все по умолчанию» под превью: сцена или оверлей — в зависимости от вкладки.</summary>
+    private void OnResetAll()
+    {
+        if (_tabs.SelectedIndex == TabScenes)
+        {
+            if (_previewScene.Length == 0) return;
+            _model.ResetSceneParams(_previewScene);
+        }
+        else if (_tabs.SelectedIndex == TabOverlays)
+        {
+            if (_editOverlay is null) return;
+            _model.ResetOverlay(_editOverlay);
+            _overlays.Invalidate();
+        }
+        else return;
+        RebuildParams();
+        UpdatePreview();
+    }
 
     private string? ActivePresetName()
     {
@@ -684,13 +779,117 @@ internal sealed class SettingsForm : Form
     {
         _paramsKey = CurrentParamsKey();
         _params.Clear();
-        bool scenesTab = _tabs.SelectedIndex == 0;
-        bool filtersTab = _tabs.SelectedIndex == 1;
+        int tab = _tabs.SelectedIndex;
+        bool scenesTab = tab == TabScenes;
+        bool filtersTab = tab == TabEffects;
+        bool overlaysTab = tab == TabOverlays;
+        bool screenTab = tab == TabScreen;
+        // Колонка под превью — только для сцен и эффектов; оверлеи и экран строятся в левой части своих страниц
         _paramsTitle.Visible = _params.Visible = scenesTab || filtersTab;
         _sceneResetAll.Visible = scenesTab;
         foreach (var b in new[] { _presetSaveAs, _presetBuiltin, _presetDelete }) b.Visible = filtersTab;
+        SetColumnGeometry(left: false);
         if (scenesTab) BuildSceneRows();
         else if (filtersTab) BuildFilterRows();
+        else if (overlaysTab) RebuildOverlayRows();
+        else if (screenTab) RebuildScreenRows();
+    }
+
+    /// <summary>Геометрия строк: колонка под превью (ширина 464) или левая часть страницы (ширина 568).</summary>
+    private void SetColumnGeometry(bool left)
+    {
+        if (left) { _valueX = 478; _resetX = 540; _controlEnd = 468; }
+        else { _valueX = ValueX; _resetX = ResetX; _controlEnd = ControlEnd; }
+    }
+
+    /// <summary>Убрать все строки контейнера (с освобождением контролов).</summary>
+    private static void ClearRows(Control host)
+    {
+        var old = host.Controls.Cast<Control>().ToList();
+        host.Controls.Clear();
+        foreach (var c in old) c.Dispose();
+    }
+
+    /// <summary>Строка в левой части: ширина 568, отступ 12, высота 28 (подзаголовок — 26).</summary>
+    private static void PlaceLeft(Control host, Control row, int y)
+    {
+        row.Location = new Point(12, y);
+        row.Size = new Size(568, 28);
+        row.BackColor = Theme.Bg;
+        host.Controls.Add(row);
+    }
+
+    /// <summary>Группы параметров экрана: подзаголовок и строки; у «плоского экрана» корпус приглушён (значения сохраняются).</summary>
+    private void RebuildScreenRows()
+    {
+        ClearRows(_screenRows);
+        SetColumnGeometry(left: true);
+        _labelCol = LabelColumn(ScreenConfig.Specs.Select(s => LabelText(s.Name, s.Description)), LeftLabelCol);
+        var groups = new (string Title, string[] Names, bool Body)[]
+        {
+            ("Геометрия", new[] { "curvature", "cornerRadius", "vignette", "overscan" }, true),
+            ("Стекло", new[] { "glare" }, true),
+            ("Корпус", new[] { "bezel", "bezelColor", "bezelSize", "bezelGlow" }, true),
+            ("Шлейф", new[] { "trail" }, false),
+        };
+        bool crt = _model.ScreenEnabled;
+        int y = 0;
+        foreach (var (title, names, body) in groups)
+        {
+            var head = HeaderRow(title);
+            PlaceLeft(_screenRows, head, y);
+            if (body && !crt) DimLabels(head);
+            head.Size = new Size(568, 26);
+            y += 26;
+            foreach (var name in names)
+            {
+                var spec = ScreenConfig.Specs.First(s => s.Name == name);
+                var row = ScreenParamRow(spec);
+                // Плоский экран: корпус неактивен (тусклый, не нажимается), шлейф — всегда активен
+                if (body && !crt) { row.Enabled = false; DimLabels(row); }
+                PlaceLeft(_screenRows, row, y);
+                y += 28;
+            }
+            y += 6;
+        }
+        SetColumnGeometry(left: false);
+    }
+
+    /// <summary>Неактивная группа: подписи приглушённым цветом (WinForms сам их не затеняет).</summary>
+    private static void DimLabels(Control host)
+    {
+        foreach (Control c in host.Controls)
+        {
+            if (c is Label l) l.ForeColor = Theme.Muted;
+            DimLabels(c);
+        }
+    }
+
+    private void RebuildOverlayRows()
+    {
+        ClearRows(_overlayRows);
+        string id = _editOverlay ?? SettingsModel.OverlayIds[0];
+        bool hud = id == "hud";
+        bool vcr = id == "vcr";
+        var specs = _model.OverlaySpecs(id) ?? Array.Empty<SceneParamSpec>();
+
+        var labels = new List<string>();
+        if (hud) labels.Add("вероятность, %");
+        labels.AddRange(specs.Select(s => LabelText(s.Name, s.Description)));
+        if (vcr) labels.Add("шрифт OSD");
+        SetColumnGeometry(left: true);
+        _labelCol = LabelColumn(labels, LeftLabelCol);
+
+        int y = 0;
+        var head = HeaderRow($"Параметры оверлея «{SettingsModel.OverlayTitle(id)}»");
+        PlaceLeft(_overlayRows, head, y);
+        head.Size = new Size(568, 26);
+        y += 30;
+        if (hud) { PlaceLeft(_overlayRows, OverlayProbabilityRow(), y); y += 28; }
+        if (specs.Count == 0 && !vcr) { PlaceLeft(_overlayRows, NoteRow("у этого оверлея нет настроек"), y); y += 28; }
+        foreach (var spec in specs) { PlaceLeft(_overlayRows, OverlayParamRow(id, spec), y); y += 28; }
+        if (vcr) { PlaceLeft(_overlayRows, OsdFontRow(), y); y += 28; }
+        SetColumnGeometry(left: false);
     }
 
     private void BuildSceneRows()
@@ -748,11 +947,11 @@ internal sealed class SettingsForm : Form
     /// Ширина колонки подписей: по самой длинной подписи, но не больше 55% панели (ползунок остаётся).
     /// Подписи длиннее колонки обрезаются с «…», полный текст — в подсказке.
     /// </summary>
-    private static int LabelColumn(IEnumerable<string> texts)
+    private static int LabelColumn(IEnumerable<string> texts, int maxCol = MaxLabelCol)
     {
         int max = 0;
         foreach (var t in texts) max = Math.Max(max, TextRenderer.MeasureText(t, Theme.Mono).Width);
-        return Math.Min(MaxLabelCol, max + 16);
+        return Math.Min(maxCol, max + 16);
     }
 
     private static string Ellipsize(string text, int maxW)
@@ -827,8 +1026,8 @@ internal sealed class SettingsForm : Form
             TextAlign = ContentAlignment.MiddleLeft,
         };
         _tip.SetToolTip(label, full.Length > 0 ? $"{full}\n({name})" : name);
-        var value = new Label { AutoSize = false, Size = new Size(ValueW, 20), Location = new Point(ValueX, 4), TextAlign = ContentAlignment.MiddleRight };
-        var reset = new ResetButton { Size = new Size(28, 22), Location = new Point(ResetX, 3) };
+        var value = new Label { AutoSize = false, Size = new Size(ValueW, 20), Location = new Point(_valueX, 4), TextAlign = ContentAlignment.MiddleRight };
+        var reset = new ResetButton { Size = new Size(28, 22), Location = new Point(_resetX, 3) };
         row.Controls.Add(label);
         row.Controls.Add(value);
         row.Controls.Add(reset);
@@ -836,7 +1035,7 @@ internal sealed class SettingsForm : Form
     }
 
     /// <summary>Место под контрол параметра: от колонки подписей до колонки значения.</summary>
-    private Size ControlSize(int height) => new(Math.Max(60, ControlEnd - _labelCol), height);
+    private Size ControlSize(int height) => new(Math.Max(60, _controlEnd - _labelCol), height);
 
     private static string FormatNumber(double v, double min, double max, bool integer)
     {
@@ -860,13 +1059,58 @@ internal sealed class SettingsForm : Form
         return FilterParamRow(preset, stage, spec);
     }
 
+    /// <summary>Для тестов: строка параметра экрана (ScreenConfig.Specs) тем же путём, что у окна.</summary>
+    internal Panel ProbeScreenParamRow(SceneParamSpec spec)
+    {
+        _labelCol = LabelColumn(new[] { LabelText(spec.Name, spec.Description) });
+        return ScreenParamRow(spec);
+    }
+
+    /// <summary>Для тестов: строка параметра оверлея тем же путём, что у окна.</summary>
+    internal Panel ProbeOverlayParamRow(string overlayId, SceneParamSpec spec)
+    {
+        _labelCol = LabelColumn(new[] { LabelText(spec.Name, spec.Description) });
+        return OverlayParamRow(overlayId, spec);
+    }
+
+    /// <summary>Для тестов: строка «вероятность, %» (HUD) и строка шрифта OSD (VCR) тем же путём, что у окна.</summary>
+    internal Panel ProbeOverlayProbabilityRow()
+    {
+        _labelCol = LabelColumn(new[] { "вероятность, %" });
+        return OverlayProbabilityRow();
+    }
+
+    internal Panel ProbeOsdFontRow()
+    {
+        _labelCol = LabelColumn(new[] { "шрифт OSD" });
+        return OsdFontRow();
+    }
+
     /// <summary>Для тестов: форма без показа. Вызывающий освобождает форму и журнал.</summary>
     internal static SettingsForm CreateForProbe(SettingsModel model, Log log) => new(model, "(тест)", log, livePreview: false);
 
-    private Panel SceneParamRow(string sceneId, SceneParamSpec spec)
+    private Panel SceneParamRow(string sceneId, SceneParamSpec spec) =>
+        SpecRow(spec, _model.SceneParamValue(sceneId, spec),
+            x => _model.SetSceneParam(sceneId, spec, x),
+            () => _model.ResetSceneParam(sceneId, spec));
+
+    private Panel ScreenParamRow(SceneParamSpec spec) =>
+        SpecRow(spec, _model.ScreenValue(spec.Name),
+            x => _model.SetScreenParam(spec.Name, x),
+            () => _model.ResetScreenParam(spec.Name));
+
+    private Panel OverlayParamRow(string overlayId, SceneParamSpec spec) =>
+        SpecRow(spec, _model.OverlayParamValue(overlayId, spec),
+            x => _model.SetOverlayParam(overlayId, spec, x),
+            () => _model.ResetOverlayParam(overlayId, spec));
+
+    /// <summary>
+    /// Строка параметра по описанию (сцена, экран, оверлей): контрол по виду (Bool — галка, Choice — комбобокс, иначе ползунок),
+    /// write пишет значение в модель, restore возвращает умолчание. Превью обновляется через OnParamEdited.
+    /// </summary>
+    private Panel SpecRow(SceneParamSpec spec, double v, Action<double> write, Action restore)
     {
         var (row, value, reset) = ParamRow(spec.Name, LabelText(spec.Name, spec.Description), spec.Description);
-        double v = _model.SceneParamValue(sceneId, spec);
         string def;
         Control control;
         switch (spec.Kind)
@@ -876,12 +1120,12 @@ internal sealed class SettingsForm : Form
                 value.Text = check.Checked ? "вкл" : "выкл";
                 check.CheckedChanged += (_, _) =>
                 {
-                    _model.SetSceneParam(sceneId, spec, check.Checked ? 1 : 0);
+                    write(check.Checked ? 1 : 0);
                     value.Text = check.Checked ? "вкл" : "выкл";
                     reset.Enabled = Differs(check.Checked ? 1 : 0, spec.Default);
                     OnParamEdited();
                 };
-                reset.Click += (_, _) => { _model.ResetSceneParam(sceneId, spec); check.Checked = spec.Default >= 0.5; };
+                reset.Click += (_, _) => { restore(); check.Checked = spec.Default >= 0.5; };
                 control = check;
                 def = spec.Default >= 0.5 ? "вкл" : "выкл";
                 reset.Enabled = Differs(v, spec.Default);
@@ -893,11 +1137,11 @@ internal sealed class SettingsForm : Form
                 combo.SelectedIndexChanged += (_, _) =>
                 {
                     if (combo.SelectedIndex < 0) return;
-                    _model.SetSceneParam(sceneId, spec, combo.SelectedIndex);
+                    write(combo.SelectedIndex);
                     reset.Enabled = Differs(combo.SelectedIndex, spec.Default);
                     OnParamEdited();
                 };
-                reset.Click += (_, _) => { _model.ResetSceneParam(sceneId, spec); combo.SelectedIndex = (int)Math.Round(spec.Default); };
+                reset.Click += (_, _) => { restore(); combo.SelectedIndex = (int)Math.Round(spec.Default); };
                 control = combo;
                 def = spec.Options is { Length: > 0 } so ? so[Math.Clamp((int)Math.Round(spec.Default), 0, so.Length - 1)] : "";
                 reset.Enabled = Differs(combo.SelectedIndex, spec.Default);
@@ -910,14 +1154,14 @@ internal sealed class SettingsForm : Form
                 value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, integer);
                 slider.ValueChanged += (_, _) =>
                 {
-                    _model.SetSceneParam(sceneId, spec, slider.Value);
+                    write(slider.Value);
                     value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, integer);
                     reset.Enabled = Differs(slider.Value, spec.Default);
                     OnParamEdited();
                 };
                 reset.Click += (_, _) =>
                 {
-                    _model.ResetSceneParam(sceneId, spec);
+                    restore();
                     slider.Value = spec.Default;
                     value.Text = FormatNumber(slider.Value, spec.Min, spec.Max, integer);
                     reset.Enabled = false;
@@ -930,6 +1174,84 @@ internal sealed class SettingsForm : Form
         }
         row.Controls.Add(control);
         FinishParamRow(row, value, reset, "по умолчанию: " + def);
+        return row;
+    }
+
+    /// <summary>Первая строка HUD: вероятность оверлея для очередной сцены (Overlay.Probability), проценты 0..100.</summary>
+    private Panel OverlayProbabilityRow()
+    {
+        const string name = "overlay.probability";
+        var (row, value, reset) = ParamRow(name, "вероятность, %", "вероятность HUD-оверлея для очередной сцены (сцены со своим HUD — без него)");
+        double def = SettingsModel.DefaultOverlayProbability * 100;
+        var box = new NumBox { Location = new Point(_labelCol, 2), Size = ControlSize(24) };
+        box.DecimalPlaces = 0;
+        box.SetRange(0, 100);
+        box.Value = Clamp(_model.OverlayProbability * 100, 0, 100);
+
+        void Refresh()
+        {
+            value.Text = box.Value.ToString("0", CultureInfo.InvariantCulture);
+            reset.Enabled = Differs(_model.OverlayProbability * 100, def);
+        }
+
+        box.ValueEdited += (_, _) =>
+        {
+            double pct = (double)box.Value;
+            if (!Differs(pct, _model.OverlayProbability * 100)) return;
+            _model.OverlayProbability = pct / 100.0;
+            Refresh();
+            OnParamEdited();
+        };
+        reset.Click += (_, _) =>
+        {
+            _model.OverlayProbability = SettingsModel.DefaultOverlayProbability;
+            box.Value = Clamp(def, 0, 100);
+            Refresh();
+            OnParamEdited();
+        };
+        Refresh();
+        row.Controls.Add(box);
+        FinishParamRow(row, value, reset, "по умолчанию: " + FormatNumber(def, 0, 100, true));
+        return row;
+    }
+
+    /// <summary>Последняя строка OSD видика: шрифт (overlay.params.vcr.font). Первый пункт — «как у сетки» (пусто).</summary>
+    private Panel OsdFontRow()
+    {
+        var (row, value, reset) = ParamRow("vcr.font", "шрифт OSD", "шрифт OSD видика; «как у сетки» — шрифт сетки");
+        var combo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ControlSize(24) };
+        combo.Items.Add(new Choice("", "как у сетки"));
+        foreach (var e in FontCatalog.List())
+            combo.Items.Add(new Choice(e.Family, e.Builtin ? $"{e.Family} · встроенный" : e.Family));
+        string cur = _model.OverlayFont;
+        int idx = cur.Length == 0 ? 0 : combo.Items.Cast<Choice>().ToList().FindIndex(ch => string.Equals(ch.Value, cur, StringComparison.OrdinalIgnoreCase));
+        if (idx < 0)
+        {
+            // Шрифт из конфига не найден в перечне — показываем как есть (как у шрифта сетки)
+            combo.Items.Insert(1, new Choice(cur, cur + " · не найден"));
+            idx = 1;
+        }
+        combo.SelectedIndex = idx;
+        value.Text = "";
+
+        void Refresh() => reset.Enabled = _model.OverlayFont.Length > 0;
+        combo.SelectedIndexChanged += (_, _) =>
+        {
+            if (combo.SelectedItem is not Choice ch) return;
+            _model.SetOverlayFont(ch.Value);
+            Refresh();
+            OnParamEdited();
+        };
+        reset.Click += (_, _) =>
+        {
+            _model.SetOverlayFont("");
+            combo.SelectedIndex = 0;
+            Refresh();
+            OnParamEdited();
+        };
+        Refresh();
+        row.Controls.Add(combo);
+        FinishParamRow(row, value, reset, "по умолчанию: как у сетки");
         return row;
     }
 
@@ -998,7 +1320,7 @@ internal sealed class SettingsForm : Form
     private void OnParamEdited()
     {
         _presets.Invalidate();
-        if (_tabs.SelectedIndex == 1) RefreshFilterTitle();
+        if (_tabs.SelectedIndex == TabEffects) RefreshFilterTitle();
         UpdatePreview();
     }
 
@@ -1129,7 +1451,7 @@ internal sealed class SettingsForm : Form
 
     private void SelectTab(string name)
     {
-        int idx = Array.IndexOf(SettingsTabs.All, name);
+        int idx = Array.IndexOf(TabIds, name);
         if (idx >= 0) _tabs.SelectedIndex = idx;
     }
 
@@ -1146,7 +1468,7 @@ internal sealed class SettingsForm : Form
     // ---------- Колонка полей: X по самой длинной подписи страницы ----------
 
     private static readonly string[] FilterLabels = { "активный фильтр" };
-    private static readonly string[] ShuffleLabels = { "интервал, с", "переход", "длительность перехода, с", "вероятность HUD-оверлея, %" };
+    private static readonly string[] ShuffleLabels = { "интервал, с", "переход", "длительность перехода, с" };
     private static readonly string[] DimmerLabels = { "через, мин", "длительность затемнения, с", "целевая яркость подсветки, %", "яркость картинки без DDC, %" };
     private static readonly string[] NetworkLabels = { "город" };
 
@@ -1217,13 +1539,15 @@ internal sealed class SettingsForm : Form
     }
 
     /// <summary>--settings-shot: PNG окна на вкладке tab без превью-процесса (вместо него — тёмная панель). Для проверки вёрстки.</summary>
-    public static int RenderShot(string pngPath, string tab, PhosphorConfig config, IEnumerable<string> scenes, Log log)
+    public static int RenderShot(string pngPath, string tab, PhosphorConfig config, IEnumerable<string> scenes, Log log, string? overlay = null)
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Theme.ForceDarkNativeControls();
         using var form = new SettingsForm(new SettingsModel(config, scenes), cfgPath: "(снимок)", log, livePreview: false);
         form.SelectTab(tab);
+        // Оверлей для снимка вкладки «Оверлеи» (hud по умолчанию, vcr — OSD видика)
+        if (overlay is not null) form._overlays.SelectId(overlay);
         // Показ за экраном: создаются дескрипторы всех контролов для DrawToBitmap, без мигания на рабочем столе
         form.StartPosition = FormStartPosition.Manual;
         form.Location = new Point(-32000, -32000);
@@ -1376,14 +1700,14 @@ internal sealed class NumBox : Panel
         _text.TextAlign = HorizontalAlignment.Right;
         _dec.Text = "-";
         _inc.Text = "+";
-        _dec.Click += (_, _) => Value -= _step;
-        _inc.Click += (_, _) => Value += _step;
+        _dec.Click += (_, _) => Edit(Value - _step);
+        _inc.Click += (_, _) => Edit(Value + _step);
         _text.KeyDown += (_, e) =>
         {
-            if (e.KeyCode == Keys.Up) { Value += _step; e.Handled = e.SuppressKeyPress = true; }
-            else if (e.KeyCode == Keys.Down) { Value -= _step; e.Handled = e.SuppressKeyPress = true; }
+            if (e.KeyCode == Keys.Up) { Edit(Value + _step); e.Handled = e.SuppressKeyPress = true; }
+            else if (e.KeyCode == Keys.Down) { Edit(Value - _step); e.Handled = e.SuppressKeyPress = true; }
         };
-        _text.Leave += (_, _) => Value = Value;
+        _text.Leave += (_, _) => Edit(Value);
         Controls.Add(_text);
         Controls.Add(_dec);
         Controls.Add(_inc);
@@ -1418,6 +1742,15 @@ internal sealed class NumBox : Panel
     {
         get => decimal.TryParse(_text.Text, NumberStyles.Number, CultureInfo.CurrentCulture, out var v) ? Clamp(v) : _min;
         set => _text.Text = Math.Round(Clamp(value), _decimals).ToString("F" + _decimals, CultureInfo.CurrentCulture);
+    }
+
+    /// <summary>Значение изменено пользователем (кнопки, стрелки, уход из поля). Программная установка Value — не вызывает.</summary>
+    public event EventHandler? ValueEdited;
+
+    private void Edit(decimal v)
+    {
+        Value = v;
+        ValueEdited?.Invoke(this, EventArgs.Empty);
     }
 
     private decimal Clamp(decimal v) => Math.Min(_max, Math.Max(_min, v));
@@ -1458,6 +1791,9 @@ internal sealed class PickList : Control
         Font = Theme.Mono;
         TabStop = true;
     }
+
+    /// <summary>Подпись строки (по умолчанию — сам id). Id при этом остаётся техническим ключом.</summary>
+    public Func<string, string>? Caption { get; init; }
 
     /// <summary>Выделенный id или null.</summary>
     public string? SelectedId => _scroll.Selected >= 0 && _scroll.Selected < _ids.Count ? _ids[_scroll.Selected] : null;
@@ -1528,7 +1864,7 @@ internal sealed class PickList : Control
             };
             var flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
             TextRenderer.DrawText(g, glyph, Theme.Glyph, new Rectangle(PadL, rect.Y, 24, RowH), glyphColor, flags);
-            TextRenderer.DrawText(g, id, Theme.Mono, new Rectangle(PadL + 30, rect.Y, rowsW - PadL - 36, RowH),
+            TextRenderer.DrawText(g, Caption?.Invoke(id) ?? id, Theme.Mono, new Rectangle(PadL + 30, rect.Y, rowsW - PadL - 36, RowH),
                 pick == Pick.Off ? Theme.Muted : Theme.Text, flags);
             if (_modified?.Invoke(id) == true)
                 TextRenderer.DrawText(g, "изменён*", Theme.Mono, new Rectangle(rowsW - 90, rect.Y, 84, RowH), Theme.Accent,
@@ -1667,6 +2003,8 @@ internal sealed class SettingsPreview : Panel
     private readonly string _tempConfig = Path.Combine(Path.GetTempPath(), $"phosphor-preview-{Environment.ProcessId}.json");
     private string? _scene;
     private string? _preset;
+    /// <summary>Оверлей для превью (--overlay), только пока открыта вкладка «Оверлеи».</summary>
+    private string? _overlay;
     private Process? _proc;
     private string? _runningArgs;
     private string _lastJson = "";
@@ -1681,10 +2019,11 @@ internal sealed class SettingsPreview : Panel
         _debounce.Tick += (_, _) => { _debounce.Stop(); Start(); };
     }
 
-    public void Request(string scene, string? preset)
+    public void Request(string scene, string? preset, string? overlay = null)
     {
         _scene = scene;
         _preset = preset;
+        _overlay = overlay;
         if (!_live) { Invalidate(); return; }
         _debounce.Stop();
         _debounce.Start();
@@ -1699,7 +2038,7 @@ internal sealed class SettingsPreview : Panel
         if (IsDisposed || _scene is null) return;
         string json = SettingsJson.Serialize(_config);
         bool cfgChanged = json != _lastJson;
-        var args = SettingsModel.PreviewArguments(Handle, _scene, _preset, _tempConfig);
+        var args = SettingsModel.PreviewArguments(Handle, _scene, _preset, _tempConfig, _overlay);
         if (!cfgChanged && args == _runningArgs && _proc is { HasExited: false }) return;
         if (cfgChanged)
         {

@@ -22,3 +22,14 @@ public interface ISceneParams
 {
     IReadOnlyList<SceneParamSpec> Params { get; }
 }
+
+/// <summary>
+/// Оверлей с настройками (необязательно). Params — как у сцен, значения лежат в overlay.params.&lt;id&gt;.
+/// Хост вызывает Configure(config.OverlayOptionsFor(id)) один раз после создания, ДО Init; читать через options.GetFloat/GetInt/GetBool/GetString.
+/// Configure без вызова — всё по умолчанию (как сейчас). Список Params не меняется между вызовами.
+/// </summary>
+public interface IOverlayParams
+{
+    IReadOnlyList<SceneParamSpec> Params { get; }
+    void Configure(SceneOptions options);
+}

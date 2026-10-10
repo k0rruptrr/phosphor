@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace Phosphor.Core;
@@ -69,7 +70,7 @@ public sealed class PhosphorConfig
         Shuffle.TransitionSec = Math.Clamp(Shuffle.TransitionSec, 0, 10);
         Shuffle.FavoriteWeight = Math.Clamp(Shuffle.FavoriteWeight, 1f, 10f);
         Scenes.Speed = Math.Clamp(Scenes.Speed, 0.05f, 10f);
-        Screen.Trail = Math.Clamp(Screen.Trail, 0f, 0.9f);
+        Screen.Validate(warnings);
         Dimmer.DelayMin = Math.Clamp(Dimmer.DelayMin, 0f, 240f);
         Dimmer.FadeSec = Math.Clamp(Dimmer.FadeSec, 0f, 600f);
         Dimmer.HardwareLevel = Math.Clamp(Dimmer.HardwareLevel, 0, 100);
@@ -100,6 +101,40 @@ public sealed class PhosphorConfig
             changed = true;
         }
         Scenes.Seen = result;
+        return changed;
+    }
+
+    /// <summary>
+    /// Убрать из стадий crt всех пресетов ключи curvature, cornerRadius, vignette (и такие же ключи внутри "mod"):
+    /// геометрию кинескопа теперь задаёт экран (screen). Идемпотентно. true — что-то удалено (конфиг стоит сохранить);
+    /// notes — по строке на пресет. Стадии не-crt не трогаются.
+    /// </summary>
+    public bool MigrateScreen(List<string> notes)
+    {
+        string[] moved = { "curvature", "cornerRadius", "vignette" };
+        bool changed = false;
+        foreach (var name in Filters.Presets.Keys.ToList())
+        {
+            var stages = Filters.Presets[name];
+            if (stages.ValueKind != JsonValueKind.Array) continue;
+            if (JsonNode.Parse(stages.GetRawText()) is not JsonArray arr) continue;
+            int removed = 0;
+            foreach (var node in arr)
+            {
+                if (node is not JsonObject stage) continue;
+                if (stage["id"] is not JsonValue idNode || !idNode.TryGetValue<string>(out var id)
+                    || !string.Equals(id, "crt", StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var key in moved)
+                {
+                    if (stage.Remove(key)) removed++;
+                    if (stage["mod"] is JsonObject mod && mod.Remove(key)) removed++;
+                }
+            }
+            if (removed == 0) continue;
+            Filters.Presets[name] = JsonDocument.Parse(arr.ToJsonString()).RootElement.Clone();
+            notes.Add($"пресет '{name}': из crt убрано {removed} ключ(ей) curvature/cornerRadius/vignette — геометрию теперь задаёт экран");
+            changed = true;
+        }
         return changed;
     }
 
@@ -137,6 +172,12 @@ public sealed class PhosphorConfig
         Params = Scenes.Params.ValueKind == JsonValueKind.Object && Scenes.Params.TryGetProperty(id, out var p) ? p.Clone() : SceneOptions.Empty,
     };
 
+    /// <summary>Параметры оверлея id (объект из overlay.params) или пустой объект. Speed/Palette/CellAspect оверлею не нужны.</summary>
+    public SceneOptions OverlayOptionsFor(string id) => new()
+    {
+        Params = Overlay.Params.ValueKind == JsonValueKind.Object && Overlay.Params.TryGetProperty(id, out var p) ? p.Clone() : SceneOptions.Empty,
+    };
+
     public const string DefaultJson = """
     {
       "cellHeightPx": 18,
@@ -144,7 +185,7 @@ public sealed class PhosphorConfig
       "scenes": {
         "enabled": ["matrix", "starfield", "pipes", "doomfire", "life", "dvd", "aquarium",
                     "teletext", "teletype", "weatherboard", "torus", "grayscott", "voxel", "boids",
-                    "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv", "scope", "bbs", "radar", "fires", "hifi", "clocks"],
+                    "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv", "scope", "bbs", "radar", "fires", "hifi", "clocks", "drone"],
         "speed": 1.0,
         "palette": "default",
         "params": {
@@ -154,17 +195,17 @@ public sealed class PhosphorConfig
       "filters": {
         "active": "terminal",
         "presets": {
-          "clean":    [ { "id": "crt", "curvature": 0.04, "scanlines": 0.2, "bloom": 0.3 } ],
+          "clean":    [ { "id": "crt", "scanlines": 0.2, "bloom": 0.3 } ],
           "terminal": [ { "id": "mono" }, { "id": "phosphor", "color": "green", "persistence": 0.82 },
                         { "id": "crt", "mod": { "brightness": { "src": "breath", "amount": 0.12 } } } ],
           "amber":    [ { "id": "mono", "contrast": 1.15 }, { "id": "phosphor", "color": "amber", "persistence": 0.86, "mod": { "persistence": { "src": "night", "amount": 0.08 } } },
-                        { "id": "crt", "curvature": 0.1, "mod": { "brightness": { "src": "breath", "amount": 0.1 } } } ],
+                        { "id": "crt", "mod": { "brightness": { "src": "breath", "amount": 0.1 } } } ],
           "kassette": [ { "id": "vhs", "mod": { "tracking": { "src": "fatigue", "amount": 0.6 } } },
                         { "id": "chroma", "amount": 1.5 },
-                        { "id": "crt", "curvature": 0.06 } ],
-          "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt", "curvature": 0.08 } ],
-          "secam":    [ { "id": "tv", "mode": "secam", "mod": { "signal": { "src": "fatigue", "amount": -0.5 } } }, { "id": "crt", "curvature": 0.08 } ],
-          "ntsc":     [ { "id": "tv", "mode": "ntsc" }, { "id": "crt", "curvature": 0.08 } ],
+                        { "id": "crt" } ],
+          "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt" } ],
+          "secam":    [ { "id": "tv", "mode": "secam", "mod": { "signal": { "src": "fatigue", "amount": -0.5 } } }, { "id": "crt" } ],
+          "ntsc":     [ { "id": "tv", "mode": "ntsc" }, { "id": "crt" } ],
           "rave":     [ { "id": "chroma", "amount": 0.6, "mod": { "amount": { "src": "beatPulse", "amount": 1.2 } } },
                         { "id": "crt", "mod": { "bloom": { "src": "bass", "amount": 0.4 } } } ]
         }
@@ -263,6 +304,8 @@ public sealed class OverlayConfig
     public double Probability { get; set; } = 0.4;
     /// <summary>OSD видика (VcrOverlay) поверх пресетов со стадией vhs. Не зависит от HUD.</summary>
     public bool Vcr { get; set; } = true;
+    /// <summary>Собственные параметры оверлеев: объект id → { имя: значение } (см. IOverlayParams). Нет поля — по умолчанию.</summary>
+    public JsonElement Params { get; set; } = SceneOptions.Empty;
 
     /// <summary>Нужен ли OSD видика для цепочки стадий пресета (id фильтров по порядку).</summary>
     public bool VcrFor(IEnumerable<string> filterIds) =>
@@ -319,11 +362,99 @@ public sealed class DimmerConfig
     public float SoftwareLevel { get; set; } = 0.25f;
 }
 
-/// <summary>Общее для экрана поверх любой сцены и пресета.</summary>
+/// <summary>
+/// «Корпус монитора» поверх любой сцены и пресета: шлейф, геометрия кинескопа, блик на стекле, рамка.
+/// Пресеты отвечают за сигнал (скан-линии, маска, свечение, PAL/VHS), экран — за железо; он один на все пресеты.
+/// Порядок кадра: выход слота → шлейф (Trail) → ScreenPass → вывод на монитор.
+/// Specs — описание для окна настроек; Get/Set — доступ по имени (Choice хранится строкой, наружу — индекс).
+/// </summary>
 public sealed class ScreenConfig
 {
     /// <summary>Шлейф (моушн-блюр): доля предыдущего кадра в текущем, 0 = выкл, до 0.9.</summary>
     public float Trail { get; set; } = 0f;
+    /// <summary>false — «плоский экран»: корпус (геометрия, стекло, рамка) выключен целиком, ScreenPass ничего не рисует;
+    /// значения полей сохраняются. Шлейф от этого не зависит.</summary>
+    public bool Enabled { get; set; } = true;
+    /// <summary>Бочкообразная кривизна кинескопа, 0 = плоский.</summary>
+    public float Curvature { get; set; } = 0.06f;
+    /// <summary>Скругление углов картинки, доля высоты.</summary>
+    public float CornerRadius { get; set; } = 0.03f;
+    /// <summary>Затемнение к краям.</summary>
+    public float Vignette { get; set; } = 0.35f;
+    /// <summary>Картинка шире стекла: края уходят под рамку, доля размера.</summary>
+    public float Overscan { get; set; } = 0f;
+    /// <summary>Неподвижный блик на стекле (отражение комнаты), 0 = нет.</summary>
+    public float Glare { get; set; } = 0f;
+    /// <summary>Рамка корпуса: "none" | "thin" | "tv" | "monitor".</summary>
+    public string Bezel { get; set; } = "none";
+    /// <summary>Цвет пластика: "black" | "graphite" | "beige".</summary>
+    public string BezelColor { get; set; } = "black";
+    /// <summary>Толщина рамки, доля высоты экрана.</summary>
+    public float BezelSize { get; set; } = 0.06f;
+    /// <summary>Отсвет картинки на внутренней фаске рамки.</summary>
+    public float BezelGlow { get; set; } = 0.5f;
+
+    public static readonly string[] BezelStyles = { "none", "thin", "tv", "monitor" };
+    public static readonly string[] BezelColors = { "black", "graphite", "beige" };
+
+    public static readonly IReadOnlyList<SceneParamSpec> Specs = new SceneParamSpec[]
+    {
+        new("curvature", SceneParamKind.Float, 0.06f, 0f, 0.5f, "кривизна кинескопа"),
+        new("cornerRadius", SceneParamKind.Float, 0.03f, 0f, 0.2f, "скругление углов"),
+        new("vignette", SceneParamKind.Float, 0.35f, 0f, 1f, "затемнение краёв"),
+        new("overscan", SceneParamKind.Float, 0f, 0f, 0.1f, "картинка под рамку"),
+        new("glare", SceneParamKind.Float, 0f, 0f, 1f, "блик на стекле"),
+        new("bezel", SceneParamKind.Choice, 0, 0, 3, "рамка корпуса", BezelStyles),
+        new("bezelColor", SceneParamKind.Choice, 0, 0, 2, "цвет пластика", BezelColors),
+        new("bezelSize", SceneParamKind.Float, 0.06f, 0.02f, 0.15f, "толщина рамки"),
+        new("bezelGlow", SceneParamKind.Float, 0.5f, 0f, 1f, "отсвет на рамке"),
+        new("trail", SceneParamKind.Float, 0f, 0f, 0.9f, "шлейф (моушн-блюр)"),
+    };
+
+    /// <summary>Значение по имени из Specs (Choice — индекс в Options). Неизвестное имя — исключение.</summary>
+    public double Get(string name) => name switch
+    {
+        "curvature" => Curvature,
+        "cornerRadius" => CornerRadius,
+        "vignette" => Vignette,
+        "overscan" => Overscan,
+        "glare" => Glare,
+        "bezel" => Math.Max(0, Array.IndexOf(BezelStyles, Bezel)),
+        "bezelColor" => Math.Max(0, Array.IndexOf(BezelColors, BezelColor)),
+        "bezelSize" => BezelSize,
+        "bezelGlow" => BezelGlow,
+        "trail" => Trail,
+        _ => throw new ArgumentException($"нет параметра экрана '{name}'", nameof(name)),
+    };
+
+    /// <summary>Записать значение по имени из Specs с клампом в Min..Max (Choice — индекс).</summary>
+    public void Set(string name, double value)
+    {
+        var spec = Specs.FirstOrDefault(s => s.Name == name) ?? throw new ArgumentException($"нет параметра экрана '{name}'", nameof(name));
+        float v = (float)Math.Clamp(value, spec.Min, spec.Max);
+        switch (name)
+        {
+            case "curvature": Curvature = v; break;
+            case "cornerRadius": CornerRadius = v; break;
+            case "vignette": Vignette = v; break;
+            case "overscan": Overscan = v; break;
+            case "glare": Glare = v; break;
+            case "bezel": Bezel = BezelStyles[(int)Math.Round(v)]; break;
+            case "bezelColor": BezelColor = BezelColors[(int)Math.Round(v)]; break;
+            case "bezelSize": BezelSize = v; break;
+            case "bezelGlow": BezelGlow = v; break;
+            case "trail": Trail = v; break;
+        }
+    }
+
+    /// <summary>Кламп всех полей; неизвестные Bezel/BezelColor — по умолчанию с предупреждением.</summary>
+    public void Validate(List<string> warnings)
+    {
+        if (Array.IndexOf(BezelStyles, Bezel) < 0) { warnings.Add($"screen.bezel='{Bezel}' неизвестна, ставлю none"); Bezel = "none"; }
+        if (Array.IndexOf(BezelColors, BezelColor) < 0) { warnings.Add($"screen.bezelColor='{BezelColor}' неизвестен, ставлю black"); BezelColor = "black"; }
+        foreach (var s in Specs)
+            if (s.Kind == SceneParamKind.Float) Set(s.Name, Get(s.Name));
+    }
 }
 
 public sealed class ExitConfig

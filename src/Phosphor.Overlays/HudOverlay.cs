@@ -10,14 +10,31 @@ namespace Phosphor.Overlays;
 /// Трекинг целей: тайлы 8x4, связная компонента ярких тайлов вокруг кандидата, bbox по ячейкам.
 /// Статические элементы прячутся, если их прямоугольник в сцене занят; появляются после 1 с чистоты.
 /// </summary>
-public sealed class HudOverlay : IOverlay
+public sealed class HudOverlay : IOverlay, IOverlayParams
 {
     public string Id => "hud";
 
     /// <summary>true — сцена плотная (непробельных &gt; 25%): статические элементы рисуются на плашке, не прячутся.</summary>
     public bool Dense => _dense;
 
-    private static readonly Rgba Accent = Rgba.Hex(0xFF6600);
+    // Параметры overlay.params.hud (см. Configure). Имена — контракт с окном настроек.
+    private static readonly SceneParamSpec[] ParamSpecs =
+    {
+        new("accent", SceneParamKind.Choice, 0f, 0f, 3f, "цвет акцента", new[] { "orange", "cyan", "green", "white" }),
+        new("targets", SceneParamKind.Int, 4f, 0f, 4f, "цели трекинга (0 — нет)"),
+        new("stats", SceneParamKind.Bool, 1f, 0f, 1f, "строка SEC (сцена)"),
+        new("clock", SceneParamKind.Bool, 1f, 0f, 1f, "часы и REC"),
+        new("ruler", SceneParamKind.Bool, 1f, 0f, 1f, "линейка слева"),
+        new("frame", SceneParamKind.Bool, 1f, 0f, 1f, "строка FRM (кадр, FPS)"),
+        new("swatches", SceneParamKind.Bool, 1f, 0f, 1f, "свотчи палитры"),
+    };
+
+    public IReadOnlyList<SceneParamSpec> Params => ParamSpecs;
+
+    private static readonly Rgba DefaultAccent = Rgba.Hex(0xFF6600);
+    private Rgba _accent = DefaultAccent;
+    private int _maxTargets = MaxTargets;
+    private readonly bool[] _enabled = new bool[GateCount];   // статические элементы: включены ли (по умолчанию все)
     private static readonly Rgba Label = Rgba.Hex(0x7A7A7A);
     private static readonly Rgba Secondary = Rgba.Hex(0xBDBDBD);
 
@@ -109,6 +126,25 @@ public sealed class HudOverlay : IOverlay
     public HudOverlay()
     {
         for (int i = 0; i < _targets.Length; i++) _targets[i] = new Target();
+        Array.Fill(_enabled, true);
+    }
+
+    /// <summary>Применяет overlay.params.hud. Вызывается хостом до Init; без вызова — значения по умолчанию.</summary>
+    public void Configure(SceneOptions options)
+    {
+        _accent = options.GetString("accent", "orange") switch
+        {
+            "cyan" => Rgba.Hex(0x00C8FF),
+            "green" => Rgba.Hex(0x39FF14),
+            "white" => Rgba.Hex(0xF0F0F0),
+            _ => DefaultAccent,
+        };
+        _maxTargets = Math.Clamp(options.GetInt("targets", MaxTargets), 0, MaxTargets);
+        _enabled[GateSec] = options.GetBool("stats", true);
+        _enabled[GateClock] = options.GetBool("clock", true);
+        _enabled[GateRuler] = options.GetBool("ruler", true);
+        _enabled[GateFrm] = options.GetBool("frame", true);
+        _enabled[GateSwatch] = options.GetBool("swatches", true);
     }
 
     public void Init(int cols, int rows, Random rng)
@@ -192,7 +228,7 @@ public sealed class HudOverlay : IOverlay
             _statsDue = _time + StatsPeriod;
             Stats(grid);
         }
-        Track();
+        if (_maxTargets > 0) Track();   // targets=0: трекинг не считается
 
         // Гейтинг проверяет сцену до того, как HUD что-то нарисует в этом кадре.
         ComputeGates(grid, in ctx);
@@ -341,25 +377,26 @@ public sealed class HudOverlay : IOverlay
             // Плотная сцена: своего HUD здесь нет, элементы рисуются на плашке.
             for (int i = 0; i < GateCount; i++)
             {
-                _vis[i] = true;
+                _vis[i] = _enabled[i];
                 _clearFor[i] = 0f;
             }
             return;
         }
 
+        // Выключенный элемент не участвует в гейтинге (RectClear не вызывается).
         // Ширины прямоугольников: SEC — 12 + id сцены; FRM — с запасом под BPM; свотчи — hex + свотчи.
         int secW = 12 + ctx.SceneId.Length;
-        Gate(GateSec, RectClear(g, SafeX, SafeY, SafeX + secW - 1, SafeY));
+        Gate(GateSec, _enabled[GateSec] && RectClear(g, SafeX, SafeY, SafeX + secW - 1, SafeY));
 
         int clockX = _cols - 3 - 15 + 1;
-        Gate(GateClock, RectClear(g, clockX, SafeY, clockX + 14, SafeY));
+        Gate(GateClock, _enabled[GateClock] && RectClear(g, clockX, SafeY, clockX + 14, SafeY));
 
-        Gate(GateRuler, RectClear(g, SafeX, 3, SafeX + 3, _rows - 4));
+        Gate(GateRuler, _enabled[GateRuler] && RectClear(g, SafeX, 3, SafeX + 3, _rows - 4));
 
-        Gate(GateFrm, RectClear(g, SafeX, _rows - 2, SafeX + 30, _rows - 2));
+        Gate(GateFrm, _enabled[GateFrm] && RectClear(g, SafeX, _rows - 2, SafeX + 30, _rows - 2));
 
         int sx = _cols - 3 - 14;
-        Gate(GateSwatch, RectClear(g, sx - 8, _rows - 2, _cols - 3, _rows - 2));
+        Gate(GateSwatch, _enabled[GateSwatch] && RectClear(g, sx - 8, _rows - 2, _cols - 3, _rows - 2));
     }
 
     // ---------- Трекинг целей ----------
@@ -471,7 +508,7 @@ public sealed class HudOverlay : IOverlay
                 if (tg.Alive) alive++;
                 else if (slot == null) slot = tg;
             }
-            if (slot == null || alive >= MaxTargets) continue;
+            if (slot == null || alive >= _maxTargets) continue;
 
             slot.Alive = true;
             slot.Matched = true;
@@ -683,7 +720,7 @@ public sealed class HudOverlay : IOverlay
         Plate(g, x0, SafeY, x0 + 14);
         PutBuf(g, x0, SafeY, Label);
 
-        Rgba recFg = BlinkOn() ? Accent : Label;
+        Rgba recFg = BlinkOn() ? _accent : Label;
         Mark(g, x0 + 10, SafeY, '●', recFg);
         Str(g, x0 + 12, SafeY, "REC", recFg);
     }
@@ -766,7 +803,7 @@ public sealed class HudOverlay : IOverlay
     private void DrawHandoff(CharGrid g)
     {
         if (!BlinkOn()) return;
-        Str(g, (_cols - HandoffText.Length) / 2, _rows / 2, HandoffText, Accent);
+        Str(g, (_cols - HandoffText.Length) / 2, _rows / 2, HandoffText, _accent);
     }
 
     private void DrawTargets(CharGrid g)
@@ -811,7 +848,7 @@ public sealed class HudOverlay : IOverlay
         if (x1 < x0 + 3) x0 = Math.Max(SafeX, x1 - 3);
         if (y1 < y0 + 2) y0 = Math.Max(SafeY, y1 - 2);
 
-        Rgba fg = main ? Accent : Secondary;
+        Rgba fg = main ? _accent : Secondary;
         Mark(g, x0, y0, '┌', fg); Mark(g, x0 + 1, y0, '─', fg);
         Mark(g, x1 - 1, y0, '─', fg); Mark(g, x1, y0, '┐', fg);
         Mark(g, x0, y1, '└', fg); Mark(g, x0 + 1, y1, '─', fg);
@@ -841,13 +878,13 @@ public sealed class HudOverlay : IOverlay
         {
             if (labelFits && budget >= len)
             {
-                PutBuf(g, lx, labelY, Accent);
+                PutBuf(g, lx, labelY, _accent);
                 budget -= len;
             }
             int lockCost = LeaderLen + 4;
             if (budget >= lockCost)
             {
-                for (int i = 1; i <= LeaderLen; i++) Mark(g, x1 + i, y0, '─', Accent);
+                for (int i = 1; i <= LeaderLen; i++) Mark(g, x1 + i, y0, '─', _accent);
                 Str(g, x1 + 1, y0 - 1, "LOCK", Label);
                 budget -= lockCost;
             }

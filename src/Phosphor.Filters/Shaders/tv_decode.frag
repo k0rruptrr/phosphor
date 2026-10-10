@@ -20,6 +20,7 @@ uniform float p_hue;          // градусы, только NTSC (Tint)
 uniform float p_sharpness;
 uniform float p_saturation;   // SECAM: насыщенность цвета
 uniform float p_fires;        // SECAM: количество факелов
+uniform float p_fireSize;     // SECAM: длина и яркость факелов (1 = как было)
 uniform float p_signal;       // SECAM: качество приёма (снег яркости, факелы от шума)
 uniform float p_edge;         // SECAM: сигналы опознавания (полоса) сверху кадра
 
@@ -33,7 +34,8 @@ const float SIG_WIDE = 9.0;           // сигма широкого ядра, p
 const float NTSC_DRIFT = 4.0 * PI / 180.0;   // внутренняя ошибка фазы NTSC, множитель amount
 const float PAL_ERR = 5.0 * PI / 180.0;      // внутренняя ошибка фазы PAL (линия задержки гасит её в насыщенность)
 const float SECAM_SEG = 16.0;         // сегмент строки для факелов, px при 1920
-const int SECAM_SEG_N = 4;            // сегментов назад от пикселя (покрывает 64 px влево при 16 px сегментах)
+const float FLARE_LEN_MAX = 60.0;     // длина факела при fireSize = 1: (10 + 50·rnd) px, верхняя граница 60
+const int SECAM_SEG_MAX = 64;         // предел просмотра сегментов назад (ранний выход по длине факела)
 // ФНЧ цвета, px на 1280. Хвост ВЛЕВО от пикселя (d < 0, длинный): цвет из левых точек приезжает в пиксель,
 // то есть цвет течёт ВПРАВО от своего источника. Короткая сторона ВПРАВО от пикселя (d > 0).
 const float SECAM_CHROMA_TAIL = 12.0;
@@ -161,10 +163,11 @@ vec2 secamChroma(float px, int row) {
     return ((L & 1) == 0) ? vec2(now.x, prev.y) : vec2(prev.x, now.y);
 }
 // Факелы по сегментам: строка L делится на сегменты по 16 px (масштаб по ширине). Для пикселя рассматриваются
-// его сегмент и 3 предыдущих. В сегменте 4 пробы края e_i = |Y(x) - Y(x-2)| (x = xs + 4i), x0 = максимум, e = максимум.
+// его сегмент и предыдущие, пока сегмент не дальше максимальной длины факела (px - x0 >= k*segW, поиск кончен).
+// В сегменте 4 пробы края e_i = |Y(x) - Y(x-2)| (x = xs + 4i), x0 = максимум, e = максимум.
 // p = 0.05*fires*smoothstep(0.08, 0.3, e) + (Y0 < 0.25 ? 0.003*fires : 0) + (1-signal)*0.9; на Db-строках p втрое меньше.
-// Выпадение по хешу (сегмент, линия, кадр). Факел от x0 вправо: длина 10..60 px, амплитуда 0.25..0.45,
-// затухание exp(-3*(x-x0)/длина). Dr-строка добавляет Cr, Db-строка Cb.
+// Выпадение по хешу (сегмент, линия, кадр). Факел от x0 вправо: длина (10..60 px)·fireSize, амплитуда
+// (0.25..0.45)·(0.8 + 0.2·fireSize), затухание exp(-3*(x-x0)/длина). Dr-строка добавляет Cr, Db-строка Cb.
 vec2 flares(float px, int L) {
     vec2 acc = vec2(0.0);
     bool dbLine = (L & 1) == 0;
@@ -173,7 +176,9 @@ vec2 flares(float px, int L) {
     float segW = floor(SECAM_SEG * uResolution.x / SC_REF + 0.5);
     float step = max(1.0, floor(segW / 4.0));
     float sIdx = floor(px / segW);
-    for (int k = 0; k < SECAM_SEG_N; k++) {
+    float lenMax = FLARE_LEN_MAX * p_fireSize;
+    for (int k = 0; k < SECAM_SEG_MAX; k++) {
+        if (float(k) * segW >= lenMax) break;
         float s = sIdx - float(k);
         if (s < 0.0) break;
         float xs = s * segW;
@@ -191,8 +196,8 @@ vec2 flares(float px, int L) {
         p *= mul;
         uint h = ihash(uint(s) * 0x9E3779B9u ^ uint(L) * 0x85EBCA6Bu ^ uint(uFrame) * 0xC2B2AE35u);
         if (rnd(h) >= p) continue;
-        float len = 10.0 + 50.0 * rnd(ihash(h ^ 0x68E31DA4u));
-        float amp = 0.25 + 0.2 * rnd(ihash(h ^ 0xB5297A4Du));
+        float len = (10.0 + 50.0 * rnd(ihash(h ^ 0x68E31DA4u))) * p_fireSize;
+        float amp = (0.25 + 0.2 * rnd(ihash(h ^ 0xB5297A4Du))) * (0.8 + 0.2 * p_fireSize);
         float d = px - x0;
         if (d < 0.0 || d >= len) continue;
         float a = amp * exp(-3.0 * d / len);
