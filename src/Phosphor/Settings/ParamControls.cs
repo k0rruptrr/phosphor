@@ -118,23 +118,76 @@ internal sealed class SliderBox : Control
         e.Handled = true;
     }
 
+    /// <summary>Колесо: в фокусе (после клика) меняет значение; без фокуса — прокручивает колонку (WheelRoute).</summary>
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WheelRoute.WmMouseWheel)
+        {
+            int delta = WheelRoute.Delta(m);
+            if (Focused)
+            {
+                float step = Integer ? 1f : (_max - _min) / 100f;
+                Apply(_value + Math.Sign(delta) * step, true);
+            }
+            else WheelRoute.Forward(this, delta);
+            return;
+        }
+        base.WndProc(ref m);
+    }
+
     protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
 
     protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
 }
 
+/// <summary>Прокрутка колонки: контейнер, который получает колесо от дочерних контролов.</summary>
+internal interface IWheelScroll
+{
+    /// <summary>delta — как в WM_MOUSEWHEEL (120 на щелчок; вниз — отрицательный).</summary>
+    void ScrollWheel(int delta);
+}
+
 /// <summary>
-/// Прокручиваемый список строк правой колонки (своя полоса, без нативной). Строки одной высоты RowH;
-/// ListScroll держит видимую часть (Top — первая видимая строка). Колесо и полоса двигают содержимое.
+/// Колесо над контролом строки. Контрол без фокуса не меняет своё значение: колесо уходит ближайшему
+/// контейнеру прокрутки (IWheelScroll) вверх по дереву. В фокусе ползунок и список меняют значение сами.
 /// </summary>
-internal sealed class ParamsPanel : Panel
+internal static class WheelRoute
+{
+    public const int WmMouseWheel = 0x020A;
+
+    /// <summary>Дельта колеса из WM_MOUSEWHEEL (старшее слово wParam, со знаком).</summary>
+    public static int Delta(Message m) => (short)((m.WParam.ToInt64() >> 16) & 0xFFFF);
+
+    /// <summary>Передать колесо ближайшему контейнеру прокрутки; без контейнера — ничего не делает.</summary>
+    public static void Forward(Control from, int delta)
+    {
+        for (var p = from.Parent; p is not null; p = p.Parent)
+        {
+            if (p is IWheelScroll scroll)
+            {
+                scroll.ScrollWheel(delta);
+                return;
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Прокручиваемый контейнер строк параметров: колонка под превью (сцены, эффекты), левая часть «Оверлеи» и «Экран».
+/// Строки — свои высоты (по умолчанию RowH); прокрутка в пикселях; полоса в стиле темы видна, только когда строк больше места.
+/// Колесо над любым дочерним контролом прокручивает контейнер (см. WheelRoute); без нативной полосы прокрутки.
+/// </summary>
+internal sealed class ParamsPanel : Panel, IWheelScroll
 {
     public const int RowH = 28;
+    /// <summary>Пикселей на щелчок колеса: три строки.</summary>
+    public const int WheelStep = RowH * 3;
     private const int BarW = 10;
 
     private readonly Panel _content = new();
     private readonly List<Control> _rows = new();
-    private readonly ListScroll _scroll = new();
+    private int _offset;
+    private int _contentH;
     private bool _dragBar;
 
     public ParamsPanel()
@@ -146,6 +199,21 @@ internal sealed class ParamsPanel : Panel
         MouseWheel += (_, e) => ScrollWheel(e.Delta);
     }
 
+    /// <summary>Строки в порядке добавления (для проверок).</summary>
+    public IReadOnlyList<Control> Rows => _rows;
+
+    /// <summary>Высота всех строк.</summary>
+    public int ContentHeight => _contentH;
+
+    /// <summary>Текущая прокрутка в пикселях (0 — начало).</summary>
+    public int Offset => _offset;
+
+    /// <summary>Наибольшая прокрутка; 0, если строки помещаются.</summary>
+    public int MaxOffset => Math.Max(0, _contentH - Height);
+
+    /// <summary>Полоса видна, только когда содержимое выше области.</summary>
+    public bool BarVisible => _contentH > Height;
+
     /// <summary>Удалить все строки (и их контролы) и вернуться к началу.</summary>
     public void Clear()
     {
@@ -155,33 +223,53 @@ internal sealed class ParamsPanel : Panel
             r.Dispose();
         }
         _rows.Clear();
-        _scroll.SetCount(0);
-        _scroll.ScrollTo(0);
+        _contentH = 0;
+        _offset = 0;
         Relayout();
     }
 
-    /// <summary>Добавить строку в конец. Строка — Panel; её контролы получают колесо мыши через этот список.</summary>
-    public void AddRow(Control row)
+    /// <summary>Добавить строку в конец. height — её высота.</summary>
+    public void AddRow(Control row, int height = RowH)
     {
-        row.Location = new Point(0, _rows.Count * RowH);
-        row.Size = new Size(Math.Max(1, _content.Width), RowH);
+        row.Location = new Point(0, _contentH);
+        row.Size = new Size(Math.Max(1, _content.Width), height);
         row.BackColor = Theme.Bg;
         _content.Controls.Add(row);
         _rows.Add(row);
+        _contentH += height;
         HookWheel(row);
         Relayout();
     }
 
+    /// <summary>Колесо над любым контролом строки (в том числе вложенным) прокручивает колонку. Ползунок, список и поле числа берут колесо сами (WndProc).</summary>
     private void HookWheel(Control c)
     {
-        c.MouseWheel += (_, e) => ScrollWheel(e.Delta);
+        c.MouseWheel += OnChildWheel;
         foreach (Control child in c.Controls) HookWheel(child);
     }
 
-    private void ScrollWheel(int delta)
+    private void OnChildWheel(object? sender, MouseEventArgs e)
     {
-        _scroll.ScrollBy(-delta / 120 * 3);
+        // Выпадающий список в фокусе меняет выбор сам — колонку не двигает
+        if (sender is ComboBox { Focused: true }) return;
+        ScrollWheel(e.Delta);
+    }
+
+    /// <summary>Прокрутить к px (с ограничением по краям).</summary>
+    public void ScrollTo(int px)
+    {
+        _offset = Math.Clamp(px, 0, MaxOffset);
         ApplyScroll();
+    }
+
+    /// <summary>Колесо: delta — как в WM_MOUSEWHEEL, WheelStep пикселей на щелчок.</summary>
+    public void ScrollWheel(int delta) => ScrollTo(_offset - delta / 120 * WheelStep);
+
+    /// <summary>Строка целиком попадает в видимую область (для проверок).</summary>
+    public bool IsRowFullyVisible(Control row)
+    {
+        int top = row.Top + _content.Top;
+        return top >= 0 && top + row.Height <= Height;
     }
 
     protected override void OnResize(EventArgs e)
@@ -190,36 +278,42 @@ internal sealed class ParamsPanel : Panel
         Relayout();
     }
 
-    /// <summary>Пересчитать ширину содержимого, число видимых строк и положение.</summary>
+    /// <summary>Пересчитать ширину содержимого, высоту и прокрутку (клампится по новой высоте).</summary>
     private void Relayout()
     {
-        _content.SetBounds(0, 0, Math.Max(100, Width - BarW - 6), Math.Max(Height, _rows.Count * RowH));
+        _content.SetBounds(0, 0, Math.Max(100, Width - BarW - 6), Math.Max(Height, _contentH));
         foreach (var r in _rows) r.Width = _content.Width;
-        _scroll.SetCount(_rows.Count);
-        _scroll.SetRows(Math.Max(1, Height / RowH));
-        ApplyScroll();
+        ScrollTo(_offset);
     }
 
     private void ApplyScroll()
     {
-        _content.Top = -_scroll.Top * RowH;
+        _content.Top = -_offset;
         Invalidate();
+    }
+
+    /// <summary>Бегунок: (Y, высота) в пикселях области. Высота — пропорционально видимой доле, не меньше 20.</summary>
+    private (int Y, int H) Thumb()
+    {
+        int h = Math.Clamp((int)((long)Height * Height / Math.Max(1, _contentH)), 20, Math.Max(1, Height));
+        int y = MaxOffset == 0 ? 0 : (int)Math.Round((Height - h) * (double)_offset / MaxOffset);
+        return (y, h);
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        if (_rows.Count <= _scroll.Rows) return;
+        if (!BarVisible) return;
         var track = new Rectangle(Width - BarW, 0, BarW, Height);
         using (var b = new SolidBrush(Theme.Bg)) e.Graphics.FillRectangle(b, track);
-        var (y, h) = _scroll.Thumb(Height);
+        var (y, h) = Thumb();
         using (var b = new SolidBrush(Theme.Border)) e.Graphics.FillRectangle(b, new Rectangle(track.X + 2, y, track.Width - 4, h));
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
-        if (e.Button != MouseButtons.Left || _rows.Count <= _scroll.Rows) return;
+        if (e.Button != MouseButtons.Left || !BarVisible) return;
         _dragBar = true;
         Capture = true;
         DragBar(e.Y);
@@ -240,9 +334,28 @@ internal sealed class ParamsPanel : Panel
 
     private void DragBar(int y)
     {
-        var (_, h) = _scroll.Thumb(Height);
-        _scroll.ScrollTo(_scroll.TopForTrack(y - h / 2, Height - h));
-        ApplyScroll();
+        var (_, h) = Thumb();
+        int len = Height - h;
+        if (len <= 0) return;
+        double f = Math.Clamp((y - h / 2) / (double)len, 0, 1);
+        ScrollTo((int)Math.Round(f * MaxOffset));
+    }
+}
+
+/// <summary>
+/// Выпадающий список строки параметров. Колесо меняет значение только в фокусе (после клика);
+/// без фокуса колесо прокручивает колонку (см. WheelRoute).
+/// </summary>
+internal sealed class ParamCombo : ComboBox
+{
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WheelRoute.WmMouseWheel && !Focused)
+        {
+            WheelRoute.Forward(this, WheelRoute.Delta(m));
+            return;
+        }
+        base.WndProc(ref m);
     }
 }
 
