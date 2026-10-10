@@ -374,3 +374,7 @@ powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 -KeepConfig
 - `assets\` — шрифты (`fonts\`) и логотип (`logo\`).
 - `tools\PreviewHost\` — проверка превью `/p`, в solution не входит.
 - `dist\` — результат сборки (не в git).
+
+## Лицензия
+
+Код — [MIT](LICENSE). Встроенные шрифты — SIL OFL 1.1 (assets/fonts). Данные из сети принадлежат своим источникам (см. «Источники данных и благодарности»).
