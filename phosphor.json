@@ -23,7 +23,7 @@
                     { "id": "chroma", "amount": 1.5 },
                     { "id": "crt" } ],
       "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt" } ],
-      "secam":    [ { "id": "tv", "mode": "secam", "mod": { "signal": { "src": "fatigue", "amount": -0.5 } } }, { "id": "crt" } ],
+      "secam":    [ { "id": "tv", "mode": "secam", "mod": { "interference": { "src": "fatigue", "amount": 0.5 } } }, { "id": "crt" } ],
       "ntsc":     [ { "id": "tv", "mode": "ntsc" }, { "id": "crt" } ],
       "rave":     [ { "id": "chroma", "amount": 0.6, "mod": { "amount": { "src": "beatPulse", "amount": 1.2 } } },
                     { "id": "crt", "mod": { "bloom": { "src": "bass", "amount": 0.4 } } } ]

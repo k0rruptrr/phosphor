@@ -138,6 +138,49 @@ public sealed class PhosphorConfig
         return changed;
     }
 
+    /// <summary>
+    /// Шкала SECAM «качество приёма» (signal, 1 = идеально) стала «помехами» (interference, 0 = чисто):
+    /// в стадиях tv пресетов signal: v → interference: 1 − v; в "mod" signal: {src, amount: a} → interference: {src, amount: −a}.
+    /// Идемпотентно. true — что-то переписано (конфиг стоит сохранить); notes — по строке на пресет.
+    /// </summary>
+    public bool MigrateTvSignal(List<string> notes)
+    {
+        bool changed = false;
+        foreach (var name in Filters.Presets.Keys.ToList())
+        {
+            var stages = Filters.Presets[name];
+            if (stages.ValueKind != JsonValueKind.Array) continue;
+            if (JsonNode.Parse(stages.GetRawText()) is not JsonArray arr) continue;
+            int moved = 0;
+            foreach (var node in arr)
+            {
+                if (node is not JsonObject stage) continue;
+                if (stage["id"] is not JsonValue idNode || !idNode.TryGetValue<string>(out var id)
+                    || !string.Equals(id, "tv", StringComparison.OrdinalIgnoreCase)) continue;
+                if (stage["signal"] is JsonValue sv && sv.TryGetValue<double>(out var v))
+                {
+                    stage.Remove("signal");
+                    stage["interference"] = 1.0 - v;
+                    moved++;
+                }
+                if (stage["mod"] is JsonObject mod && mod["signal"] is JsonObject sig)
+                {
+                    var src = sig["src"]?.DeepClone();
+                    var ns = new JsonObject { ["src"] = src };
+                    if (sig["amount"] is JsonValue av && av.TryGetValue<double>(out var a)) ns["amount"] = -a;
+                    mod.Remove("signal");
+                    mod["interference"] = ns;
+                    moved++;
+                }
+            }
+            if (moved == 0) continue;
+            Filters.Presets[name] = JsonDocument.Parse(arr.ToJsonString()).RootElement.Clone();
+            notes.Add($"пресет '{name}': tv.signal переведён в tv.interference (шкала инвертирована: помехи = 1 − качество приёма)");
+            changed = true;
+        }
+        return changed;
+    }
+
     /// <summary>Записать конфиг в файл (camelCase, с отступами). Перед первой перезаписью файла без Seen — копия в <path>.bak.</summary>
     public void Save(string path)
     {
@@ -204,7 +247,7 @@ public sealed class PhosphorConfig
                         { "id": "chroma", "amount": 1.5 },
                         { "id": "crt" } ],
           "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt" } ],
-          "secam":    [ { "id": "tv", "mode": "secam", "mod": { "signal": { "src": "fatigue", "amount": -0.5 } } }, { "id": "crt" } ],
+          "secam":    [ { "id": "tv", "mode": "secam", "mod": { "interference": { "src": "fatigue", "amount": 0.5 } } }, { "id": "crt" } ],
           "ntsc":     [ { "id": "tv", "mode": "ntsc" }, { "id": "crt" } ],
           "rave":     [ { "id": "chroma", "amount": 0.6, "mod": { "amount": { "src": "beatPulse", "amount": 1.2 } } },
                         { "id": "crt", "mod": { "bloom": { "src": "bass", "amount": 0.4 } } } ]
@@ -413,8 +456,8 @@ public sealed class ScreenConfig
         new("curvature", SceneParamKind.Float, 0.06f, 0f, 0.5f, "кривизна кинескопа"),
         new("cornerRadius", SceneParamKind.Float, 0.03f, 0f, 0.2f, "скругление углов"),
         new("vignette", SceneParamKind.Float, 0.35f, 0f, 1f, "затемнение краёв"),
-        new("overscan", SceneParamKind.Float, 0f, 0f, 0.1f, "картинка под рамку"),
-        new("glare", SceneParamKind.Float, 0f, 0f, 1f, "блик на стекле"),
+        new("overscan", SceneParamKind.Float, 0f, 0f, 0.2f, "картинка под рамку"),
+        new("glare", SceneParamKind.Float, 0f, 0f, 4f, "блик на стекле"),
         new("bezel", SceneParamKind.Choice, 0, 0, 3, "рамка корпуса", BezelStyles),
         new("bezelColor", SceneParamKind.Choice, 0, 0, 2, "цвет пластика", BezelColors),
         new("bezelSize", SceneParamKind.Float, 0.06f, 0.02f, 0.15f, "толщина рамки"),

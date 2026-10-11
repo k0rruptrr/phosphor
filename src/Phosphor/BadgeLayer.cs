@@ -469,6 +469,8 @@ internal sealed class BadgeLayer : IDisposable
         if (_canvas is null) return;
 
         var p = _badge.Placement;
+        // opacity 0 — бирка не рисуется (вместе с подложкой)
+        if (p.Opacity <= 0f) return;
         var r = BadgeGeometry.PlaceBox(p.Anchor, _boxW, _boxH, p.Margin, _vpW, _vpH);
         if (p.Drift)
         {

@@ -341,8 +341,9 @@ public class VhsFilterTests
     }
 
     [Fact]
-    public void NoBand_AtRest_TrackingBelowThreshold_600Frames()
+    public void WeakBand_TrackingLow_ShiftStaysSmall_600Frames()
     {
+        // Мёртвой зоны больше нет: при tracking=0.1 эпизоды есть, но сила ∝ tracking (до ~3 px)
         const int W = 320, H = 180;
         using var gpu = new GpuHarness(W, H);
         gpu.SetInput((x, y) => (Stripe(x), Stripe(x), Stripe(x)));
@@ -351,11 +352,30 @@ public class VhsFilterTests
         for (long frame = 0; frame < 600; frame++)
         {
             var img = gpu.Run(f, frame, o);
-            // Средние 90% высоты (строки 5%..95%) не сдвинуты больше чем на 2 px
+            // Средние 90% высоты (строки 5%..95%) не сдвинуты больше чем на 4 px
             for (int y = H / 20; y <= H - H / 20; y += 3)
             {
                 int s = BestShift(img, y, 6);
-                Assert.True(Math.Abs(s) <= 2, $"кадр {frame}, строка {y}: сдвиг {s} px при tracking=0.1");
+                Assert.True(Math.Abs(s) <= 4, $"кадр {frame}, строка {y}: сдвиг {s} px при tracking=0.1");
+            }
+        }
+    }
+
+    [Fact]
+    public void Tracking_Zero_NoEpisodes_600Frames()
+    {
+        const int W = 320, H = 180;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (Stripe(x), Stripe(x), Stripe(x)));
+        using var f = gpu.Create<VhsFilter>();
+        var o = StripeOnly(0f, 0.5f);
+        for (long frame = 0; frame < 600; frame++)
+        {
+            var img = gpu.Run(f, frame, o);
+            for (int y = H / 20; y <= H - H / 20; y += 3)
+            {
+                int s = BestShift(img, y, 6);
+                Assert.True(Math.Abs(s) <= 2, $"кадр {frame}, строка {y}: сдвиг {s} px при tracking=0");
             }
         }
     }

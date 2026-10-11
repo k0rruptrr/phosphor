@@ -17,16 +17,16 @@ public sealed class TvFilter : ShaderFilter
         new ParamSpec("mode", 0f, 0f, 2f, new[] { "pal", "secam", "ntsc" }, "Система цветности", "система цвета"),
         new ParamSpec("amount", 1f, 0f, 1f, null, "Общая сила артефактов, 0 = почти без изменений", "сила эффекта"),
         new ParamSpec("hue", 0f, -30f, 30f, null, "Оттенок в градусах (ручка Tint для NTSC)", "оттенок"),
-        new ParamSpec("sharpness", 0.3f, 0f, 1f, null, "Звон и перерегулирование яркости на краях", "резкость"),
+        new ParamSpec("sharpness", 0.3f, 0f, 3f, null, "Звон и перерегулирование яркости на краях", "резкость"),
         new ParamSpec("saturation", 0.6f, 0f, 1.5f, null, "SECAM: насыщенность декодированного цвета (пастель)", "насыщенность"),
-        new ParamSpec("fires", 0.5f, 0f, 1f, null, "SECAM: количество факелов и штрихов шума (0 — нет совсем)", "факелы"),
+        new ParamSpec("fires", 0.5f, 0f, 4f, null, "SECAM: количество факелов и штрихов шума (0 — нет совсем)", "факелы"),
         new ParamSpec("fireSize", 1f, 0.3f, 2.5f, null, "SECAM: длина и яркость факелов", "размер факелов"),
-        new ParamSpec("signal", 1f, 0f, 1f, null, "SECAM: качество приёма, 1 = идеально, ниже = снег и факелы от шума", "качество приёма"),
-        new ParamSpec("edge", 0f, 0f, 1f, null, "Артефакт перезаписи VHS: светлая рваная линия слева и цветная кромка справа, 0 — выкл (в эфире её нет)", "палка слева"),
-        new ParamSpec("bottles", 0f, 0f, 1f, null, "SECAM: сигналы опознавания («бутылки») сверху кадра, 0 — выкл", "бутылки сверху"),
-        new ParamSpec("ghost", 0.25f, 0f, 1f, null, "Отражённый сигнал: слабая копия картинки правее контуров", "двоение (эфир)"),
+        new ParamSpec("interference", 0f, 0f, 1f, null, "SECAM: снег и штрихи шума, 0 — чистый приём", "помехи приёма"),
+        new ParamSpec("edge", 0f, 0f, 3f, null, "Артефакт перезаписи VHS: светлая рваная линия слева и цветная кромка справа, 0 — выкл (в эфире её нет)", "палка слева"),
+        new ParamSpec("bottles", 0f, 0f, 3f, null, "SECAM: сигналы опознавания («бутылки») сверху кадра, 0 — выкл", "бутылки сверху"),
+        new ParamSpec("ghost", 0.25f, 0f, 2f, null, "Отражённый сигнал: слабая копия картинки правее контуров", "двоение (эфир)"),
         new ParamSpec("ghostDelay", 0.02f, 0.005f, 0.06f, null, "Задержка отражения, доля ширины кадра", "сдвиг двоения"),
-        new ParamSpec("fibers", 1f, 0f, 2f, null, "SECAM: строчный шум («волокна») по ровным полям и чёрному, 0 — гладко", "волокна"),
+        new ParamSpec("fibers", 1f, 0f, 2f, null, "SECAM: строчный шум («волокна») по ровным полям и чёрному и выпадения перезаписи, 0 — гладко и без выпадений", "волокна"),
     };
 
     private const string EncodeResource = "Phosphor.Filters.Shaders.tv_encode.frag";

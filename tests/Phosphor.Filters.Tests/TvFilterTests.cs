@@ -42,7 +42,7 @@ public class TvFilterTests
     public void Params_NamesDefaultsAndOptions()
     {
         var ps = new TvFilter().Params;
-        Assert.Equal(new[] { "mode", "amount", "hue", "sharpness", "saturation", "fires", "fireSize", "signal", "edge", "bottles", "ghost", "ghostDelay", "fibers" },
+        Assert.Equal(new[] { "mode", "amount", "hue", "sharpness", "saturation", "fires", "fireSize", "interference", "edge", "bottles", "ghost", "ghostDelay", "fibers" },
             ps.Select(p => p.Name).ToArray());
         Assert.Equal(0.25f, ps[10].Default);   // T5: двоение (эфир), по умолчанию 0.25
         Assert.Equal(0.02f, ps[11].Default);   // T5: сдвиг двоения, по умолчанию 0.02
@@ -380,8 +380,8 @@ public class TvFilterTests
         return MathF.Sqrt(cb * cb + cr * cr);
     }
 
-    private static Dictionary<string, float> Secam(float signal = 1f, float fires = 0f, float edge = 0f, float bottles = 0f) =>
-        new() { ["mode"] = ModeSecam, ["amount"] = 1f, ["signal"] = signal, ["fires"] = fires, ["edge"] = edge, ["bottles"] = bottles };
+    private static Dictionary<string, float> Secam(float interference = 0f, float fires = 0f, float edge = 0f, float bottles = 0f) =>
+        new() { ["mode"] = ModeSecam, ["amount"] = 1f, ["interference"] = interference, ["fires"] = fires, ["edge"] = edge, ["bottles"] = bottles };
 
     [Fact]
     public void Secam_AchromaticGlyphs_NoRainbow()
@@ -527,7 +527,7 @@ public class TvFilterTests
         using var f = gpu.Create<TvFilter>();
 
         // Пользователь: «даже на минимуме факелов их слишком много» — шум слабого сигнала тоже под ползунком «факелы».
-        var weak = gpu.Run(f, 0, Secam(signal: 0.3f, fires: 1f));
+        var weak = gpu.Run(f, 0, Secam(interference: 0.7f, fires: 1f));
         int colored = 0, n = 0;
         for (int y = 8; y < H - 8; y++)
         for (int x = 200; x < 1700; x++)
@@ -562,12 +562,12 @@ public class TvFilterTests
         Assert.True(coloredFrac >= 0.10, $"цветных {coloredFrac:P1} (нужно ≥ 10%), корреляция соседних линий {corr:F3}");
         Assert.True(corr < 0, $"корреляция соседних линий {corr:F3} (нужно < 0), цветных {coloredFrac:P1}");
 
-        var clean = gpu.Run(f, 0, Secam(signal: 1f));
+        var clean = gpu.Run(f, 0, Secam(interference: 0f));
         int cleanColored = 0;
         for (int y = 8; y < H - 8; y++)
         for (int x = 200; x < 1700; x++)
             if (Chroma(clean, x, y) > 0.08f) cleanColored++;
-        Assert.True((double)cleanColored / n < 0.01, $"при signal=1 цветных {(double)cleanColored / n:P2}");
+        Assert.True((double)cleanColored / n < 0.01, $"при interference=0 цветных {(double)cleanColored / n:P2}");
     }
 
     private static float Diff(float[,,] img, int x, int y)
@@ -762,7 +762,7 @@ public class TvFilterTests
         using var gpu = new GpuHarness(W, H);
         gpu.SetInput((x, y) => (x / 64) % 2 == 0 ? (0.05f, 0.05f, 0.05f) : (0.9f, 0.9f, 0.9f));
         using var f = gpu.Create<TvFilter>();
-        var img = gpu.Run(f, 3, Secam(signal: 0.3f, fires: 0f));
+        var img = gpu.Run(f, 3, Secam(interference: 0.7f, fires: 0f));
         int longest = 0;
         for (int y = 8; y < H - 8; y++)
         {
@@ -1064,7 +1064,7 @@ public class TvFilterTests
     public void Secam_MatrixLikeInput_DefaultFiresAreSparse()
     {
         // Дозировка факелов на сцене с большим числом краёв (matrix/ASCII): ахроматический вход, дефолтные параметры
-        // (signal=1, fires=0.5). Цветность здесь только от факелов: доля пикселей с цветностью > 0.08 должна быть мала,
+        // (interference=0, fires=0.5). Цветность здесь только от факелов: доля пикселей с цветностью > 0.08 должна быть мала,
         // как в secam-fires-film.jpg (редкие мазки), а не сетка по всему кадру. Край x < 64 не считаем: там кромка.
         using var gpu = new GpuHarness(W, H);
         gpu.SetInput((x, y) => (x % 16 < 6 && y % 16 < 12) ? (1f, 1f, 1f) : (0f, 0f, 0f));
@@ -1124,7 +1124,7 @@ public class TvFilterTests
     [Fact]
     public void Secam_FireSize25_FlaresAreLongerThanAt1()
     {
-        // Сетка глифов (много краёв), signal=1, fires=1: факелы от каждого сегмента с краем. Длина факела ∝ fireSize.
+        // Сетка глифов (много краёв), interference=0, fires=1: факелы от каждого сегмента с краем. Длина факела ∝ fireSize.
         using var gpu = new GpuHarness(W, H);
         gpu.SetInput((x, y) => (x % 16 < 6 && y % 16 < 12) ? (1f, 1f, 1f) : (0f, 0f, 0f));
         using var f = gpu.Create<TvFilter>();

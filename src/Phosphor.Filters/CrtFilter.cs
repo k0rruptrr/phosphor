@@ -14,7 +14,7 @@ public sealed class CrtFilter : ShaderFilter
     private static readonly IReadOnlyList<ParamSpec> _params = new ParamSpec[]
     {
         new ParamSpec("scanlines", 0.5f, 0f, 1f, null, "Сила тёмных скан-линий", "строки развёртки"),
-        new ParamSpec("scanlinePeriod", 3f, 1f, 8f, null, "Период скан-линий в пикселях выхода", "период строк"),
+        new ParamSpec("scanlinePeriod", 3f, 2f, 8f, null, "Период скан-линий в пикселях выхода", "период строк"),
         new ParamSpec("bloom", 0.8f, 0f, 3f, null, "Сила свечения вокруг ярких участков", "свечение"),
         new ParamSpec("bloomRadius", 6f, 0.5f, 16f, null, "Радиус свечения в пикселях входа", "радиус свечения"),
         new ParamSpec("flicker", 0.03f, 0f, 0.3f, null, "Амплитуда мерцания яркости", "мерцание"),

@@ -44,12 +44,14 @@ internal static class Program
             // Геометрия кинескопа ушла из пресетов в экран (screen): убираем старые ключи crt в памяти во всех режимах
             var notes = new List<string>();
             bool screenMigrated = config.MigrateScreen(notes);
+            // signal → interference (SECAM): шкала инвертирована, пресеты переписываются в памяти во всех режимах
+            bool tvMigrated = config.MigrateTvSignal(notes);
             // Старый конфиг: новые сцены из обновления включаются сами и запоминаются (не для --shot и превью).
             // Файл сохраняется только в этих режимах; миграция экрана сохраняется вместе с ними.
             if (args.Mode is LaunchMode.Screensaver or LaunchMode.Windowed or LaunchMode.Configure)
             {
                 bool scenesMigrated = config.MigrateScenes(Catalog.Scenes().Ids, notes);
-                if (scenesMigrated || screenMigrated)
+                if (scenesMigrated || screenMigrated || tvMigrated)
                 {
                     foreach (var n in notes) log.Info("конфиг: " + n);
                     try { config.Save(cfgPath); log.Info("конфиг: сохранён " + cfgPath); }

@@ -21,7 +21,7 @@ uniform float p_sharpness;
 uniform float p_saturation;   // SECAM: насыщенность цвета
 uniform float p_fires;        // SECAM: количество факелов
 uniform float p_fireSize;     // SECAM: длина и яркость факелов (1 = как было)
-uniform float p_signal;       // SECAM: качество приёма (снег яркости, факелы от шума)
+uniform float p_interference; // SECAM: помехи приёма, 0 — чистый (снег яркости, факелы от шума)
 uniform float p_edge;         // SECAM: края гашения (светлая палка слева, тёмная цветная кромка справа)
 uniform float p_bottles;      // SECAM: сигналы опознавания («бутылки») сверху кадра
 uniform float p_ghost;        // двоение (эфир): отражённая копия правее контуров
@@ -172,7 +172,7 @@ vec2 secamChroma(float px, int row) {
 // Факелы по сегментам: строка L делится на сегменты по 16 px (масштаб по ширине). Для пикселя рассматриваются
 // его сегмент и предыдущие, пока сегмент не дальше максимальной длины факела (px - x0 >= k*segW, поиск кончен).
 // В сегменте 4 пробы края e_i = |Y(x) - Y(x-2)| (x = xs + 4i), x0 = максимум, e = максимум.
-// p = 0.05*fires*smoothstep(0.08, 0.3, e) + (Y0 < 0.25 ? 0.003*fires : 0) + (1-signal)*0.9; на Db-строках p втрое меньше.
+// p = 0.05*fires*smoothstep(0.08, 0.3, e) + (Y0 < 0.25 ? 0.003*fires : 0) + interference²*0.9; на Db-строках p втрое меньше.
 // Выпадение по хешу (сегмент, линия, кадр). Факел от x0 вправо: длина (10..60 px)·fireSize, амплитуда
 // (0.25..0.45)·(0.8 + 0.2·fireSize), затухание exp(-3*(x-x0)/длина). Dr-строка добавляет Cr, Db-строка Cb.
 vec2 flares(float px, int L) {
@@ -201,11 +201,11 @@ vec2 flares(float px, int L) {
         uint h = ihash(uint(s) * 0x9E3779B9u ^ uint(L) * 0x85EBCA6Bu ^ uint(uFrame) * 0xC2B2AE35u);
         // Три члена вероятности, один бросок rnd(h) делит их по накопленным порогам. Каждый со своими правилами:
         // (1) контур: 0.05·fires·smoothstep(e), знак + (Dr → Cr+, Db → Cb+), Db ×1/3, длина ×fireSize;
-        // (2) слабый сигнал: (1 − signal)·0.9, знак +, Db ×1/3, длина ×fireSize (как до T4);
+        // (2) помехи приёма: interference²·0.9, знак +, Db ×1/3, длина ×fireSize (как до T4);
         // (3) тёмный: (y0 < 0.25) ? 0.003·fires : 0, канал по строке, случайный знак, без ×1/3, длина ×3·fireSize.
         float pC = 0.05 * p_fires * smoothstep(0.08, 0.3, e) * mul;
         // Шум слабого сигнала: под ползунком «факелы» (0 — нет), квадрат — лёгкая просадка приёма почти не сыплет
-        float pS = (1.0 - p_signal) * (1.0 - p_signal) * 0.9 * p_fires * mul;
+        float pS = p_interference * p_interference * 0.9 * p_fires * mul;
         float pD = (y0 < 0.25 ? 0.003 * p_fires : 0.0);
         float r = rnd(h);
         if (r < pC + pS + pD) {
@@ -312,7 +312,7 @@ void main() {
         int L = row / 2;
         float y = secamLuma(px, row);
         float snow = rnd(ihash(uint(px) * 0x27D4EB2Du ^ uint(row) * 0x165667B1u ^ uint(uFrame) * 0x9E3779B9u)) - 0.5;
-        y += (1.0 - p_signal) * 0.15 * snow;
+        y += p_interference * 0.15 * snow;
         // Строчный шум («волокна»): вдоль строки ~200 px, независим между строками; на тёмном поле ещё и цветной.
         float fib = smoothNoise(px / 200.0 + rowPh(row));
         float fib2 = smoothNoise(px / 200.0 + rowPh(row) + 50.0);
@@ -322,16 +322,18 @@ void main() {
         float tot = max(sc.r + sc.g + sc.b, 0.05);
         float kf = 1.0 + 0.6 * sc.g / tot - 0.4 * sc.b / tot;
         y += p_fibers * kf * (0.025 * fib + dk * 0.02 * fib2);
-        // Редкие выпадения: в среднем 1.5 на кадр, белые чёрточки 8–30 px.
+        // Редкие выпадения перезаписи: в среднем 1.5 на кадр при fibers = 1, белые чёрточки 8–30 px.
+        // Вероятность пропорциональна fibers: при 0 выпадений нет, при 2 — вдвое чаще.
         uint dh = ihash(uint(row) * 0x85EBCA6Bu ^ uint(uFrame) * 0xC2B2AE35u ^ 0x3B9AC9u);
-        if (rnd(dh) < 1.5 / uResolution.y) {
+        if (rnd(dh) < 1.5 / uResolution.y * p_fibers) {
             float dx0 = rnd(ihash(dh ^ 0x68E31DA4u)) * W;
             float dlen = 8.0 + 22.0 * rnd(ihash(dh ^ 0xB5297A4Du));
             if (px >= dx0 && px < dx0 + dlen) y += 0.6;
         }
         vec2 cc = secamChroma(px, row) * p_saturation;
         cc *= 1.0 - 0.35 * smoothstep(0.6, 1.0, y);
-        cc += dk * 0.03 * vec2(-0.6, -1.0) * (0.5 + 0.5 * fib2);   // тёмное поле: зеленоватый сдвиг цветности
+        // тёмное поле: зеленоватый сдвиг цветности; его модуляция шумом — под fibers (при 0 — ровно, как «гладко»)
+        cc += dk * 0.03 * vec2(-0.6, -1.0) * (0.5 + 0.5 * fib2 * p_fibers);
         if (p_fires > 0.0) cc += flares(px, L);
         // Обратное преобразование Y, Cb, Cr в RGB (Cb = 0.564(B-Y), Cr = 0.713(R-Y)).
         col = vec3(y + 1.402 * cc.y,
@@ -350,8 +352,8 @@ void main() {
             sw += w;
         }
         // Хвост = сдвиг цветности в противоположную сторону от фона (на чёрном — зеленоватый базовый сдвиг).
-        // Хвост относится к семейству факелов: включён тем же условием (fires/signal).
-        if (p_fires > 0.0 || p_signal < 1.0) {
+        // Хвост относится к семейству факелов: включён тем же условием (fires/interference).
+        if (p_fires > 0.0 || p_interference > 0.0) {
             // Цветность фона, повёрнутая по оттенку на −120° (cos = −0.5, sin = −0.866), плюс небольшой зелёный базис.
             vec2 rc = vec2(-0.5 * cc.x + 0.8660254 * cc.y, -0.8660254 * cc.x - 0.5 * cc.y);
             vec2 tail = 0.5 * (sm / sw) * (rc + vec2(-0.05, -0.08));
@@ -365,7 +367,9 @@ void main() {
         uint tk = uint(uFrame);
         float jitL = 3.0 * smoothNoise(float(row) * 0.7 + uTime * 4.0);
         float dLft = abs(px + 0.5 - (0.015 * W + jitL));
-        float hw = 0.00125 * W;
+        // Gate насыщен при edge ≥ 0.5, поэтому при edge > 1 (новый Max 3) палка шире: ×1.5 при 2, ×2 при 3. До 1 — как было.
+        float ew = 1.0 + 0.5 * max(p_edge - 1.0, 0.0);
+        float hw = 0.00125 * W * ew;
         float prof = 1.0 - smoothstep(hw - 0.4, hw + 2.6, dLft);
         float gapOn = step(0.12, rnd(ihash(uint(row / 6) * 0x9E3779B9u ^ tk * 0x85EBCA6Bu ^ 0x7A3D1Fu)));
         float brightBlk = step(0.88, rnd(ihash(uint(row / 8) * 0x27D4EB2Du ^ tk * 0x165667B1u ^ 0x1B873593u)));
