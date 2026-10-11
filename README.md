@@ -26,6 +26,12 @@ PHOSPHOR вырос из бессонницы и одновременно — э
 
 Отдельное спасибо Claude Opus из соседнего чата: его шейдер PAL/SECAM вошёл в проект как фильтр `tv2` почти без изменений.
 
+## Установка
+
+Скачать из [релизов](https://github.com/k0rruptrr/phosphor/releases) **`PHOSPHOR-Setup-<версия>.exe`** и запустить: один клик, без прав администратора, ставится в `%LOCALAPPDATA%\Programs\Phosphor` и сразу становится заставкой. Удаление — «Установленные приложения» → PHOSPHOR (возвращает прежнюю заставку). Не любите установщики — там же zip: распаковать и запустить `Установить.bat`, результат тот же.
+
+Ассоциацию `.scr` установщик не трогает: Windows запускает заставку по пути в реестре. Установщик не подписан, SmartScreen скажет «неизвестный издатель» → «Подробнее» → «Выполнить в любом случае».
+
 ## Быстрый старт
 
 Требования: .NET 8 SDK (для сборки), Windows 10/11 x64.
@@ -68,6 +74,8 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 - `dist\PHOSPHOR-<версия>\` и `dist\PHOSPHOR-<версия>.zip`, где версия — `ProductVersion` exe с `+` заменённым на `-` (например `PHOSPHOR-0.7.0-70ba44e.zip`). Путь и размер zip печатаются в конце.
 - Внутри: `Phosphor.exe` (`Phosphor.scr` делает `install.ps1`, в пакет он не входит), `phosphor.json` (копия из репозитория), `install.ps1`, `uninstall.ps1`, `Установить.bat`, `Удалить.bat`, `ПРОЧТИ.txt` (инструкция для получателя).
 - Папка `fonts\` (встроенные шрифты IBM Plex Mono, VT323, Press Start 2P и файлы лицензий OFL-*.txt): попадает в zip и ставится `install.ps1` в `%LOCALAPPDATA%\Programs\Phosphor\fonts\`.
+
+- `dist\PHOSPHOR-Setup-<x.y.z>.exe` — установщик в один клик (Inno Setup 6, сценарий `scripts\package\phosphor.iss`). Внутри тот же пакет: установщик распаковывает его во временную папку и запускает `install.ps1`, удаление вызывает `uninstall.ps1 -RegistryOnly` и убирает папку. Если Inno Setup не установлен, шаг пропускается с предупреждением (`winget install JRSoftware.InnoSetup --scope user`).
 
 Скрипт сначала запускает `publish.ps1` (self-contained, с smoke-тестом); если сборка упала, пакет не создаётся. Получатель распаковывает архив и запускает `Установить.bat`; `install.ps1 -Source <папка>` ставит из любой папки с файлами программы. Шаблоны лежат в `scripts\package\` под именами `pkg-install.bat`, `pkg-uninstall.bat`, `pkg-readme.txt`.
 

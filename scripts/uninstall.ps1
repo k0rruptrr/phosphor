@@ -1,8 +1,11 @@
 # uninstall.ps1 - restore the previous screensaver settings and remove the PHOSPHOR install folder.
-# Usage: powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 [-KeepConfig] [-WhatIf] [-Confirm]
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 [-KeepConfig] [-RegistryOnly] [-WhatIf] [-Confirm]
+#   -RegistryOnly: restore the registry, leave the folder (the Inno Setup uninstaller deletes it itself:
+#                  its own unins000.exe is still running from there).
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [switch]$KeepConfig
+    [switch]$KeepConfig,
+    [switch]$RegistryOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +51,10 @@ if (Test-Path -LiteralPath $prevFile) {
 }
 
 # 2. Remove install folder
+if ($RegistryOnly) {
+    Write-Host "-RegistryOnly: install folder left in place"
+    exit 0
+}
 if (-not (Test-Path -LiteralPath $dstDir)) {
     Write-Host "Install folder not found: $dstDir (nothing to delete)"
     exit 0

@@ -41,7 +41,7 @@ if ($dirty.Count -gt 0) {
 }
 
 # 1. Build (self-contained by default). publish.ps1 also copies phosphor.json and runs the smoke test.
-Write-Host '== 1/4 publish.ps1 (self-contained) =='
+Write-Host '== 1/5 publish.ps1 (self-contained) =='
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'publish.ps1')
 if ($LASTEXITCODE -ne 0) {
     throw "publish.ps1 failed (exit code $LASTEXITCODE). The package was NOT built. Fix the build error above and run package.ps1 again."
@@ -58,7 +58,7 @@ $zip    = Join-Path $distDir "$name.zip"
 Write-Host "Version: $pv  ->  $name"
 
 # 2. Assemble the folder
-Write-Host "== 2/4 assemble $pkgDir =="
+Write-Host "== 2/5 assemble $pkgDir =="
 # Clear the contents, not the folder itself (it may be held open by Explorer or a sync tool)
 if (Test-Path -LiteralPath $pkgDir) {
     Get-ChildItem -LiteralPath $pkgDir -Force | Remove-Item -Recurse -Force
@@ -117,12 +117,12 @@ Get-ChildItem -LiteralPath $pkgDir -File | Sort-Object Name | ForEach-Object {
 if ($skipped.Count -gt 0) { Write-Host ("Not included from dist\Phosphor: " + ($skipped -join ', ')) }
 
 # 3. Zip
-Write-Host '== 3/4 zip =='
+Write-Host '== 3/5 zip =='
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -LiteralPath $pkgDir -DestinationPath $zip
 
 # 4. Check the archive
-Write-Host '== 4/4 check archive =='
+Write-Host '== 4/5 check archive =='
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $arc = [IO.Compression.ZipFile]::OpenRead($zip)
 try {
@@ -133,8 +133,29 @@ try {
 }
 
 $zipSize = (Get-Item -LiteralPath $zip).Length
+
+# 5. One-click installer (Inno Setup 6): dist\PHOSPHOR-Setup-<x.y.z>.exe from the same folder.
+#    Skipped with a warning when ISCC is not installed (winget install JRSoftware.InnoSetup --scope user).
+Write-Host '== 5/5 installer (Inno Setup) =='
+$iscc = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+    (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+$setup = $null
+if ($iscc) {
+    $appVer = ($pv.Trim() -split '\+')[0]
+    $setupName = "PHOSPHOR-Setup-$appVer"
+    & $iscc /Q "/DPkgDir=$pkgDir" "/DAppVer=$appVer" "/DOutName=$setupName" "/DOutDir=$distDir" (Join-Path $tplDir 'phosphor.iss')
+    if ($LASTEXITCODE -ne 0) { throw "ISCC failed (exit code $LASTEXITCODE)" }
+    $setup = Join-Path $distDir "$setupName.exe"
+} else {
+    Write-Host 'WARNING: Inno Setup 6 not found - installer NOT built (zip is ready). winget install JRSoftware.InnoSetup --scope user'
+}
+
 Write-Host ''
 Write-Host "Package folder : $pkgDir"
 Write-Host ("Package zip    : {0}" -f $zip)
 Write-Host ("Size           : {0:N2} MB ({1:N0} bytes), {2} entries" -f ($zipSize / 1MB), $zipSize, $count)
+if ($setup) { Write-Host ("Installer      : {0} ({1:N2} MB)" -f $setup, ((Get-Item -LiteralPath $setup).Length / 1MB)) }
 exit 0
