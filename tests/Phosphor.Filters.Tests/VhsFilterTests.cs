@@ -585,4 +585,37 @@ public class VhsFilterTests
         int width = EdgeWidth(img, 90);
         Assert.True(width > 3, $"ширина перехода яркости при lumaRes 520: {width} px, нужно > 3");
     }
+
+    [Fact]
+    public void NoFullWidthSeamLine_InBottomZone_OnDarkBackground()
+    {
+        // Светлой линии во всю ширину в нижних 6% кадра быть не должно: средняя яркость строки по всей ширине
+        // не выше соседних (±3 строки) более чем на 0.03. Параметры — kassette, тёмный однородный вход.
+        const int W = 640, H = 1080;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0.05f, 0.05f, 0.05f));
+        using var f = gpu.Create<VhsFilter>();
+        // Полоса плохого трекинга выключена: её белые чёрточки — честный эффект, а здесь проверяется только шов головок.
+        var o = new Dictionary<string, float>
+        {
+            ["badTracking"] = 0f, ["lumaRes"] = 520f, ["chromaRes"] = 60f,
+        };
+        foreach (long fr in new long[] { 0, 300, 600 })
+        {
+            var img = gpu.Run(f, fr, o);
+            var mean = new double[H];
+            for (int y = 0; y < H; y++)
+            {
+                double s = 0;
+                for (int x = 0; x < W; x++) s += GpuHarness.Luma(img, x, y);
+                mean[y] = s / W;
+            }
+            for (int y = (int)(H * 0.94); y < H - 3; y++)
+            {
+                double nb = (mean[y - 3] + mean[y + 3]) / 2;
+                double d = mean[y] - nb;
+                Assert.True(d <= 0.03, $"кадр {fr}, строка {y}: средняя яркость выше соседних на {d:F3}");
+            }
+        }
+    }
 }

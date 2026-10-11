@@ -107,7 +107,7 @@ public sealed class ScreenPass : IDisposable
         }
 
         // Маска кинескопа в пикселях выхода. shadow — триады по x; trinitron — полосы без горизонтальной структуры,
-        // depth ×0.8, плюс две тёмные нити на 1/3 и 2/3 высоты окна стекла; diagonal — канал (x + y) mod 3
+        // depth ×0.8 (нити — отдельно, threadCover); diagonal — канал (x + y) mod 3
         // с размытием [1/4 1/2 1/4] по x.
         vec3 maskMul() {
             float fx = floor(gl_FragCoord.x);
@@ -119,12 +119,6 @@ public sealed class ScreenPass : IDisposable
                   + 0.25 * triad(mod(fx + 1.0 + fy, 3.0), uMask);
             } else if (uMaskType == 1) {
                 m = triad(mod(fx, 3.0), 0.8 * uMask);
-                // Нити — по строкам пикселей: строка = floor(линия), толщина uThreadPx (нечётная — точное число строк).
-                float y0 = uWin.y, hW = uWin.w - uWin.y;
-                float fr = floor(gl_FragCoord.y);
-                float dA = abs(fr - floor(y0 + hW / 3.0));
-                float dB = abs(fr - floor(y0 + 2.0 * hW / 3.0));
-                if (min(dA, dB) <= 0.5 * (uThreadPx - 1.0)) m *= 1.0 - 0.30;   // нити — физические: фиксированные 30%, не от силы маски
             } else {
                 m = triad(mod(fx, 3.0), uMask);
             }
@@ -138,6 +132,113 @@ public sealed class ScreenPass : IDisposable
                 for (int j = 0; j < 3; j++)
                     acc += texture(uSmall, vec2(0.17 + 0.33 * float(i), 0.17 + 0.33 * float(j))).rgb;
             return acc / 9.0;
+        }
+
+        // Нити trinitron: две линии на 1/3 и 2/3 высоты окна в изогнутых координатах (гнутся с картинкой).
+        // Толщина uThreadPx, сглаживание по расстоянию ~1 px. Возвращает покрытие 0..1.
+        float threadCover(vec2 q, vec2 wS) {
+            float h = 0.5 * uThreadPx;
+            float dA = abs((q.y - 1.0 / 3.0) * wS.y);
+            float dB = abs((q.y - 2.0 / 3.0) * wS.y);
+            return max(1.0 - smoothstep(h, h + 1.0, dA), 1.0 - smoothstep(h, h + 1.0, dB));
+        }
+
+        // Снаружи проёма: при bezel none — чёрный; при рамке — пластик. dist — расстояние до проёма, px, >= 0.
+        vec3 outsideCol(vec2 px, vec2 q, float dist, vec2 wS) {
+            if (uStyle == 0) return vec3(0.0);
+            // Пластик: тёмный внешний край, верхний свет, статичное зерно.
+            float outerD = min(min(px.x, uOut.x - px.x), min(px.y, uOut.y - px.y));
+            float edgeDark = mix(0.6, 1.0, smoothstep(0.0, max(uB * 0.5, 1.0), outerD));
+            float grain = 1.0 + (hash(gl_FragCoord.xy) - 0.5) * 0.04;
+
+            // Четыре клина рамки по диагоналям выхода: верх светлее, бока средние, низ темнее.
+            // Швы сглажены (ширина перехода ~ радиус углов). Без нормалей.
+            vec2 nd = (px - 0.5 * uOut) / (0.5 * uOut);
+            float seam = 0.02;
+            float wTop = smoothstep(-seam, seam, nd.y - abs(nd.x));
+            float wBot = smoothstep(-seam, seam, -nd.y - abs(nd.x));
+            float wSide = clamp(1.0 - wTop - wBot, 0.0, 1.0);
+            float wedge = 1.3 * wTop + 0.5 * wBot + 0.85 * wSide;
+            // Клинья только на полосе фаски; плоская часть рамки — ровный тон. Перелом сглажен на 1–2 px.
+            float inFace = uFaceW > 0.0 ? 1.0 - smoothstep(uFaceW - 1.5, uFaceW + 1.5, dist) : 0.0;
+            float shade = mix(1.0, wedge, inFace);
+
+            // Подкраска фосфором: пластик смешан с тёмным оттенком картинки (средний цвет × 0.2).
+            vec3 plastic = uPlastic;
+            if (uGlow > 0.0) plastic = mix(uPlastic, meanScreen() * 0.2, 0.5);
+            vec3 col = plastic * shade * grain * edgeDark;
+
+            // Фаска у проёма: к стеклу темнее, переход к плоской рамке мягкий.
+            if (uFaceW > 0.0) {
+                col *= mix(0.6, 1.0, smoothstep(0.0, uFaceW, dist));
+            }
+
+            // Тень рамки у стекла: ~5 px (масштаб по высоте), плавно темнеет к проёму.
+            col *= mix(0.35, 1.0, smoothstep(0.0, 0.005 * uOut.y, dist));
+
+            // Зеркальный отсвет: точка за кромкой отражается внутрь стекла; размытая копия картинки,
+            // вес 0.7·bezelGlow у самой кромки.
+            if (uGlow > 0.0) {
+                vec2 e = clamp(q, 0.0, 1.0);
+                vec2 outV = q - e;
+                vec2 mir = clamp(e - outV, 0.0, 1.0);
+                vec2 rad = 0.5 * uB / wS;
+                vec3 refl = blurSmall(picUv(mir), rad);
+                col = mix(col, refl, 0.7 * uGlow * exp(-dist / (0.12 * uB + 0.5)));
+            }
+
+            // Светодиод питания (monitor): тусклый зелёный, нижняя правая часть рамки.
+            if (uStyle == 3) {
+                vec2 lc = vec2(uOut.x - 1.5 * uB, 0.5 * uB);
+                float lr = max(1.5, 0.12 * uB);
+                vec2 dl = px - lc;
+                col += vec3(0.1, 0.9, 0.25) * 0.35 * exp(-dot(dl, dl) / (lr * lr));
+            }
+            return col;
+        }
+
+        // Стекло: картинка, чересстрочность, утопленная тень у края, виньетка, маска, нити, отлив.
+        // sdG — расстояние до края стекла, px (<0 внутри).
+        vec3 glassCol(vec2 q, vec2 wS, float sdG) {
+            vec2 pu = picUv(q);
+            vec2 puc = clamp(pu, 0.0, 1.0);
+            vec3 col = texture(uTex, puc).rgb;
+
+            // Чересстрочность: строки текущего поля — текущий кадр, другого — смесь с прошлым кадром,
+            // и они чуть темнее (мерцание поля). На неподвижной картинке ничего не меняется (кроме мерцания).
+            if (uIl > 0.0) {
+                vec3 pr = texture(uPrev, puc).rgb;
+                int li = int(floor(gl_FragCoord.y / uLine));
+                if ((li % 2) != uPar) col = mix(col, pr, uIl) * (1.0 - 0.12 * uIl);
+            }
+
+            // Глубокая внутренняя тень у края проёма: стекло утоплено, ~3.5% высоты.
+            if (uStyle > 0) {
+                float depth = -sdG;
+                col *= mix(0.05, 1.0, smoothstep(0.0, 0.035 * wS.y, depth));
+            }
+
+            // Виньетка (как в crt.frag), по картинке.
+            vec2 vq = pu - 0.5;
+            float ve = dot(vq, vq) * 4.0;
+            col *= 1.0 - uVig * smoothstep(0.3, 1.5, ve);
+
+            // Маска кинескопа — поверх картинки, до блика.
+            if (uMask > 0.0) col *= maskMul();
+            // Нити trinitron: физические, 12% на линии, гнутся вместе с картинкой.
+            if (uMask > 0.0 && uMaskType == 1) col *= 1.0 - 0.12 * threadCover(q, wS);
+
+            // Отлив стекла: широкий и мягкий, светлее и серее в центре/вверху, к краям гаснет.
+            // Смешивание экранное c + r·(1 − c); на белом входе не меняет картинку.
+            // Свечение стекла: g = sqrt(25·x(1−x)·y(1−y)) — максимум в центре, пятен и окон нет.
+            // Серый слой с альфой 0.3·glare, смешивание экранное.
+            if (uGlare > 0.0) {
+                vec2 xy = clamp(q, 0.0, 1.0);
+                float g = sqrt(clamp(25.0 * xy.x * (1.0 - xy.x) * xy.y * (1.0 - xy.y), 0.0, 1.0));
+                float a = 0.3 * uGlare * g;
+                col = col + vec3(0.2) * a * (1.0 - col);
+            }
+            return col;
         }
 
         void main() {
@@ -164,104 +265,12 @@ public sealed class ScreenPass : IDisposable
             float sdA = sdRR(dq, wH, Ra);
             float sdG = sdRR(dq, wH - uKromka, max(Ra - uKromka, 0.0));
 
-            vec3 col;
-            if (sdA > 0.0) {
-                if (uStyle == 0) {
-                    // Без рамки: за изогнутыми краями экрана — чёрный.
-                    col = vec3(0.0);
-                } else {
-                    // Пластик: тёмный внешний край, верхний свет, статичное зерно.
-                    float dist = sdA;
-                    float outerD = min(min(px.x, uOut.x - px.x), min(px.y, uOut.y - px.y));
-                    float edgeDark = mix(0.6, 1.0, smoothstep(0.0, max(uB * 0.5, 1.0), outerD));
-                    float grain = 1.0 + (hash(gl_FragCoord.xy) - 0.5) * 0.04;
-
-                    // Четыре клина рамки по диагоналям выхода: верх светлее, бока средние, низ темнее.
-                    // Швы сглажены (ширина перехода ~ радиус углов). Без нормалей.
-                    vec2 nd = (px - 0.5 * uOut) / (0.5 * uOut);
-                    float seam = 0.02;
-                    float wTop = smoothstep(-seam, seam, nd.y - abs(nd.x));
-                    float wBot = smoothstep(-seam, seam, -nd.y - abs(nd.x));
-                    float wSide = clamp(1.0 - wTop - wBot, 0.0, 1.0);
-                    float wedge = 1.3 * wTop + 0.5 * wBot + 0.85 * wSide;
-                    // Клинья только на полосе фаски; плоская часть рамки — ровный тон. Перелом сглажен на 1–2 px.
-                    float inFace = uFaceW > 0.0 ? 1.0 - smoothstep(uFaceW - 1.5, uFaceW + 1.5, dist) : 0.0;
-                    float shade = mix(1.0, wedge, inFace);
-
-                    // Подкраска фосфором: пластик смешан с тёмным оттенком картинки (средний цвет × 0.2).
-                    vec3 plastic = uPlastic;
-                    if (uGlow > 0.0) plastic = mix(uPlastic, meanScreen() * 0.2, 0.5);
-                    col = plastic * shade * grain * edgeDark;
-
-                    // Фаска у проёма: к стеклу темнее, переход к плоской рамке мягкий.
-                    if (uFaceW > 0.0) {
-                        col *= mix(0.6, 1.0, smoothstep(0.0, uFaceW, dist));
-                    }
-
-                    // Тень рамки у стекла: ~5 px (масштаб по высоте), плавно темнеет к проёму.
-                    col *= mix(0.35, 1.0, smoothstep(0.0, 0.005 * uOut.y, dist));
-
-                    // Зеркальный отсвет: точка за кромкой отражается внутрь стекла; размытая копия картинки,
-                    // вес 0.7·bezelGlow у самой кромки.
-                    if (uGlow > 0.0) {
-                        vec2 e = clamp(q, 0.0, 1.0);
-                        vec2 outV = q - e;
-                        vec2 mir = clamp(e - outV, 0.0, 1.0);
-                        vec2 rad = 0.5 * uB / wS;
-                        vec3 refl = blurSmall(picUv(mir), rad);
-                        col = mix(col, refl, 0.7 * uGlow * exp(-dist / (0.12 * uB + 0.5)));
-                    }
-
-                    // Светодиод питания (monitor): тусклый зелёный, нижняя правая часть рамки.
-                    if (uStyle == 3) {
-                        vec2 lc = vec2(uOut.x - 1.5 * uB, 0.5 * uB);
-                        float lr = max(1.5, 0.12 * uB);
-                        vec2 dl = px - lc;
-                        col += vec3(0.1, 0.9, 0.25) * 0.35 * exp(-dot(dl, dl) / (lr * lr));
-                    }
-                }
-            } else if (uKromka > 0.0 && sdG > 0.0) {
-                // Тёмная ровная кромка стекла между проёмом и картинкой.
-                col = vec3(0.012);
-            } else {
-                // Стекло: картинка, утопленная тень у края, виньетка, отлив.
-                vec2 pu = picUv(q);
-                vec2 puc = clamp(pu, 0.0, 1.0);
-                col = texture(uTex, puc).rgb;
-
-                // Чересстрочность: строки текущего поля — текущий кадр, другого — смесь с прошлым кадром,
-                // и они чуть темнее (мерцание поля). На неподвижной картинке ничего не меняется (кроме мерцания).
-                if (uIl > 0.0) {
-                    vec3 pr = texture(uPrev, puc).rgb;
-                    int li = int(floor(gl_FragCoord.y / uLine));
-                    if ((li % 2) != uPar) col = mix(col, pr, uIl) * (1.0 - 0.12 * uIl);
-                }
-
-                // Глубокая внутренняя тень у края проёма: стекло утоплено, ~3.5% высоты.
-                if (uStyle > 0) {
-                    float depth = -sdG;
-                    col *= mix(0.05, 1.0, smoothstep(0.0, 0.035 * wS.y, depth));
-                }
-
-                // Виньетка (как в crt.frag), по картинке.
-                vec2 vq = pu - 0.5;
-                float ve = dot(vq, vq) * 4.0;
-                col *= 1.0 - uVig * smoothstep(0.3, 1.5, ve);
-
-                // Маска кинескопа — поверх картинки, до блика.
-                if (uMask > 0.0) col *= maskMul();
-
-                // Отлив стекла: широкий и мягкий, светлее и серее в центре/вверху, к краям гаснет.
-                // Смешивание экранное c + r·(1 − c); на белом входе не меняет картинку.
-                // Свечение стекла: g = sqrt(25·x(1−x)·y(1−y)) — максимум в центре, пятен и окон нет.
-                // Серый слой с альфой 0.3·glare, смешивание экранное.
-                if (uGlare > 0.0) {
-                    vec2 xy = clamp(q, 0.0, 1.0);
-                    float g = sqrt(clamp(25.0 * xy.x * (1.0 - xy.x) * xy.y * (1.0 - xy.y), 0.0, 1.0));
-                    float a = 0.3 * uGlare * g;
-                    col = col + vec3(0.2) * a * (1.0 - col);
-                }
-            }
+            // Сглаживание границ покрытием пикселя (ширина ~1 px, px выхода): проём — стекло/кромка ↔ снаружи;
+            // кромка — стекло ↔ кромка. Снаружи при bezel none — чёрный, при рамке — пластик.
+            vec3 cGlass = glassCol(q, wS, sdG);
+            vec3 inner = uKromka > 0.0 ? mix(cGlass, vec3(0.012), clamp(sdG + 0.5, 0.0, 1.0)) : cGlass;
+            vec3 cOut = outsideCol(px, q, max(sdA, 0.0), wS);
+            vec3 col = mix(inner, cOut, clamp(sdA + 0.5, 0.0, 1.0));
             fragColor = vec4(col * oi, 1.0);
         }
         """;

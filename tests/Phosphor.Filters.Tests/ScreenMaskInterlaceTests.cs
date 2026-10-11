@@ -130,8 +130,9 @@ public sealed unsafe class ScreenMaskInterlaceTests
             var px = Read(gl, sp.Apply(white, N, N, cfg));
             int t1 = N / 3, t2 = 2 * N / 3;
             // Нити на 1/3 и 2/3 высоты: темнее соседних строк минимум на 20%
-            Assert.True(RowMean(px, t1) <= 0.8f * RowMean(px, t1 - 10), $"нить {RowMean(px, t1)}, рядом {RowMean(px, t1 - 10)}");
-            Assert.True(RowMean(px, t2) <= 0.8f * RowMean(px, t2 - 10), $"нить {RowMean(px, t2)}, рядом {RowMean(px, t2 - 10)}");
+            // Нити: 12% на линии (строка 170 и 341 — рядом с 1/3 и 2/3 при 512; ratio ≈ 0.88)
+            Assert.InRange(RowMean(px, t1) / RowMean(px, t1 - 10), 0.86f, 0.90f);
+            Assert.InRange(RowMean(px, t2) / RowMean(px, t2 - 10), 0.86f, 0.90f);
             // В остальном по вертикали однородно
             Assert.InRange(RowMean(px, 20) - RowMean(px, 100), -1e-3f, 1e-3f);
             Assert.InRange(RowMean(px, 250) - RowMean(px, 100), -1e-3f, 1e-3f);
@@ -170,7 +171,7 @@ public sealed unsafe class ScreenMaskInterlaceTests
     }
 
     [Fact]
-    public void Trinitron_At1080_ThreadsOnExactRows360And720()
+    public void Trinitron_At1080_ThreadsOnRows359_360_719_720()
     {
         // 1080 — 1/3 и 2/3 высоты целые: нити ложатся ровно на строки 360 и 720 (GL, снизу вверх).
         using var win = ScreensaverWindow.CreateHidden(64, 64);
@@ -184,14 +185,14 @@ public sealed unsafe class ScreenMaskInterlaceTests
             cfg.MaskType = "trinitron";
             const int w = N, h = 1080;
             var px = ReadWH(gl, sp.Apply(white, w, h, cfg), w, h);
-            // Нити — физические: затемнение фиксированное 30% независимо от силы маски (белый вход: ratio 0.70)
-            float r360 = RowMeanWH(px, w, 360) / RowMeanWH(px, w, 350);
-            float r720 = RowMeanWH(px, w, 720) / RowMeanWH(px, w, 710);
-            Assert.InRange(r360, 0.69f, 0.71f);
-            Assert.InRange(r720, 0.69f, 0.71f);
-            // Соседние строки нитей не трогают
+            // Нити: 12% на линии (1/3 = 360 и 2/3 = 720 — между строками 359/360 и 719/720, каждая ≈ 0.88)
+            Assert.InRange(RowMeanWH(px, w, 359) / RowMeanWH(px, w, 350), 0.87f, 0.89f);
+            Assert.InRange(RowMeanWH(px, w, 360) / RowMeanWH(px, w, 350), 0.87f, 0.89f);
+            Assert.InRange(RowMeanWH(px, w, 719) / RowMeanWH(px, w, 710), 0.87f, 0.89f);
+            Assert.InRange(RowMeanWH(px, w, 720) / RowMeanWH(px, w, 710), 0.87f, 0.89f);
+            // Строки на расстоянии 1.5 px от линии не трогаются
+            Assert.InRange(RowMeanWH(px, w, 358) - RowMeanWH(px, w, 350), -1e-3f, 1e-3f);
             Assert.InRange(RowMeanWH(px, w, 361) - RowMeanWH(px, w, 350), -1e-3f, 1e-3f);
-            Assert.InRange(RowMeanWH(px, w, 721) - RowMeanWH(px, w, 710), -1e-3f, 1e-3f);
         }
         finally { gl.DeleteTexture(white); }
     }
@@ -305,5 +306,34 @@ public sealed unsafe class ScreenMaskInterlaceTests
             Assert.True(worst <= 0.13f, $"наибольшее отклонение {worst}");
         }
         finally { gl.DeleteTexture(src); }
+    }
+
+    [Fact]
+    public void Corner_BezelNone_CurvedEdgeIsAntialiased()
+    {
+        // Раньше граница была жёсткой веткой (0 или 1): промежуточных значений не было.
+        using var win = ScreensaverWindow.CreateHidden(64, 64);
+        var gl = win.Gl;
+        uint white = Make(gl, (x, y) => 1f);
+        try
+        {
+            using var sp = new ScreenPass(gl);
+            var cfg = Off();
+            cfg.Curvature = 0.13f;
+            cfg.CornerRadius = 0.03f;
+            var px = Read(gl, sp.Apply(white, N, N, cfg));
+            int mid = 0, midCorner = 0;
+            for (int y = 0; y < N; y++)
+                for (int x = 0; x < N; x++)
+                {
+                    float v = At(px, x, y);
+                    if (v <= 0.05f || v >= 0.95f) continue;
+                    mid++;
+                    if (x < 40 && y < 40) midCorner++;
+                }
+            Assert.True(mid > 50, $"промежуточных пикселей на границе: {mid}");
+            Assert.True(midCorner >= 2, $"промежуточных пикселей в углу (40×40): {midCorner}");
+        }
+        finally { gl.DeleteTexture(white); }
     }
 }
