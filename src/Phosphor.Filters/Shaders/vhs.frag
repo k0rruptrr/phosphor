@@ -24,6 +24,8 @@ uniform float p_iqShift;
 uniform float p_chromaClip;
 uniform float p_lumaRes;
 uniform float p_chromaRes;
+uniform float p_tbc;
+uniform float p_bandClone;
 
 const float TAU = 6.2831853;
 const float SKEW_ZONE = 0.025;    // шов головок: нижние 2.5% кадра (CRT прячет низ по углам)
@@ -164,21 +166,53 @@ void main() {
     float cm = rnd3(row >> 1u, cx, fr + 13u);
     float skew = p_bottomSkew * 45.0 * tb * (0.25 + 0.75 * cm);
 
-    // Плохой трекинг: катящаяся полоса, сверху вниз, 8 с на проход при bandSpeed = 1.
-    // yb — центр полосы (uv), a — расстояние строки до центра со знаком, в долях высоты (-0.5..0.5).
+    // Плохой трекинг: горизонтальная полоса с ровными краями. Центр ходит вверх-вниз (сумма двух медленных синусов,
+    // у краёв задерживается), толщина плавно 2..10% высоты. bandY — центр (uv), a — расстояние строки до центра (uv).
     float bt = p_badTracking;
-    float yb = 1.0 - fract(tm * p_bandSpeed / 8.0);
-    float a = fract(vUv.y - yb + 0.5) - 0.5;
-    float da = abs(a);
-    float zf = clamp(1.0 - da / 0.12, 0.0, 1.0);          // 1 в центре полосы, 0 на краю зоны (0.12)
-    float bandAmp = mix(0.6, 1.0, rnd3(fr, 61u, 0u));    // дёрганье: амплитуда меняется каждый кадр
-    float bandRow = 0.7 + 0.3 * rnd3(row, fr, 62u);      // и по строкам
-    // Перекос: выше центра — сильный сдвиг вправо (до 60 px на 1920), ниже — слабый обратный хвост (до 10 px).
-    float bandRaw = a >= 0.0 ? 60.0 * pow(zf, 4.0) : -10.0 * pow(zf, 2.0);
-    float bandX = bt * (res.x / 1920.0) * bandAmp * bandRow * bandRaw;
+    float spd = p_bandSpeed;
+    float bandY = clamp(0.5 + 0.38 * sin(TAU * tm * spd / 23.0 + 0.7) + 0.12 * sin(TAU * tm * spd / 9.0 + 2.1), 0.08, 0.92);
+    // Полная толщина 4..12% высоты при bt = 1 (в среднем ~6% при bt 0.35): (0.04 + 0.08·s) · (0.5 + 0.5·bt).
+    float thick = (0.04 + 0.08 * (0.5 + 0.5 * sin(TAU * tm * spd / 11.0 + 1.3))) * (0.5 + 0.5 * bt);
+    float halfT = 0.5 * thick;
+    float pxY = 1.0 / res.y;
+    float a = vUv.y - bandY;
+    // zf — маска полосы: 1 внутри, края резкие (мягкость 1.5 px), одна строка на всю ширину.
+    float zf = 1.0 - smoothstep(halfT - 1.5 * pxY, halfT + 1.5 * pxY, abs(a));
+    float bandAmp = mix(0.6, 1.0, rnd3(fr, 61u, 0u));    // дёрганье силы: меняется каждый кадр
+    float bs = bt * zf * bandAmp;                         // сила полосы в пикселе
+    // Тонкая тёмная линия у верхнего края полосы: 1 px.
+    float topLine = smoothstep(halfT - 1.5 * pxY, halfT - 0.5 * pxY, a) * (1.0 - smoothstep(halfT - 0.5 * pxY, halfT + 0.5 * pxY, a));
 
-    float D = wob + jit + bandShift + skew + bandX;
+    // Шлейф: строка делится на отрезки 20–160 px (на 1920), сетка и длины — свои на строку, обновляются каждые 2 кадра.
+    // Все пиксели отрезка берут цвет источника в его начале. Сдвиг строки по x — 0..12 px (на 1920).
+    float sc = res.x / 1920.0;
+    uint lay = fr / 2u;
+    float rowShift = bt * zf * 12.0 * sc * rnd3(row, lay, 63u);
+    float segStart = 0.0;
+    uint segId = 0u;
+    float pos = -sc * 160.0 * rnd3(row, 990u, lay);
+    for (uint j = 0u; j < 64u; j++) {
+        float L = sc * (20.0 + 140.0 * rnd3(row, j, lay * 2u + 7u));
+        if (px.x < pos + L) { segStart = pos; segId = j; break; }
+        pos += L;
+    }
+
+    // TBC (p_tbc > 0.5): строки выровнены по синхроимпульсу, картинка без сдвигов jitter/wobble/шва головок
+    // (сдвиг трекинга остаётся). Сдвиг, который TBC компенсировал, — |Dfull| + 0.4% ширины: это ширина зелёной кромки слева.
+    float Dfull = wob + jit + bandShift + skew;
+    bool tbc = p_tbc > 0.5;
+    float D = tbc ? bandShift : Dfull;
+    float tbcEdge = abs(Dfull) + 0.004 * res.x;
     float xg = vUv.x - D / res.x;
+    // Режим полосы выбирается по эпизоду (1.5 с): «клон» с вероятностью bandClone, иначе горизонтальный шлейф.
+    bool cloneMode = rnd3(uint(floor(tm / 1.5)), 201u, 0u) < p_bandClone;
+    float cw = cloneMode ? zf * bt : 0.0;     // вес клона в пикселе
+    float sw = cloneMode ? 0.0 : zf * bt;     // вес шлейфа в пикселе
+    // Шлейф: отрезок берёт источник в своём начале (плюс сдвиг строки).
+    // Клон (компенсатор выпадений): все строки полосы берут строку сразу над верхним краем полосы, столбец в столбец.
+    xg = mix(xg, (segStart + rowShift) / res.x, sw);
+    xg = mix(xg, vUv.x, cw);
+    vy = mix(vy, min(bandY + halfT + 2.0 * pxY, 0.999), cw);
 
     // 2. Выборка: Y резкая (1 тап с rgbShift), I/Q размыты влево от точки, цвет тянется вправо.
     float rs = p_rgbShift / res.x;
@@ -231,10 +265,9 @@ void main() {
         col += chromaToRGB(vec2(clipComp(yc.y, lim), clipComp(yc.z, lim)) - yc.yz);
     }
     // Плохой трекинг: цветность в зоне полосы смешивается с шумом (шум строки + немного пиксельного).
-    float kc = bt * zf * zf;
+    float kc = cloneMode ? 0.0 : bt * zf * zf;
     if (kc > 0.0) {
-        vec2 nIQ = 0.5 * vec2(rnd3(row, fr, 91u) - 0.5 + 0.3 * (rnd3(xi, row, fr + 92u) - 0.5),
-                              rnd3(row, fr, 93u) - 0.5 + 0.3 * (rnd3(xi, row, fr + 94u) - 0.5));
+        vec2 nIQ = 0.5 * vec2(rnd3(row, segId, fr + 91u) - 0.5, rnd3(row, segId, fr + 93u) - 0.5);
         vec3 yc = toYIQ(col);
         col += chromaToRGB(kc * (nIQ - yc.yz));
     }
@@ -275,22 +308,19 @@ void main() {
     }
     col += streak * bk;
 
-    // Плохой трекинг: шум яркости в зоне полосы и белые чёрточки в самой полосе (|a| < 0.01), ячейки 200 px.
-    col += bt * zf * 0.1 * rnd3(xi, row, fr + 95u);
-    if (bt > 0.0 && da < 0.01) {
-        int ci2 = int(floor(px.x / 200.0));
-        for (int k = 0; k < 2; k++) {
-            int cc = ci2 - k;
-            if (cc < 0) continue;
-            uint cu = uint(cc);
-            if (rnd3(row, cu, fr + 81u) < bt * 0.25) {
-                float len2 = 10.0 + 50.0 * rnd3(row, cu, fr + 82u);
-                float x2 = float(cu) * 200.0 + rnd3(row, cu, fr + 83u) * 200.0;
-                float onSpeck = smoothstep(x2 - 1.0, x2 + 0.5, px.x) * (1.0 - smoothstep(x2 + len2 - 1.0, x2 + len2 + 1.0, px.x));
-                col = mix(col, vec3(0.95), onSpeck);
-            }
-        }
+    // Плохой трекинг: верхний край — тёмная линия, выцветание цветности ~60%, осветление к белому 0.15–0.25
+    // и лёгкий шум яркости. Всё постоянно внутри отрезка (segId), поэтому отрезок ровный.
+    // Выцветание — к яркости пикселя (luma), затем осветление к белому: яркость внутри полосы не падает.
+    // В режиме клона цвета строки-источника сохраняются: без выцветания, осветления и темной линии.
+    if (bt > 0.0 && zf > 0.0 && !cloneMode) {
+        col *= 1.0 - 0.25 * topLine;
+        float lumB = dot(col, vec3(0.299, 0.587, 0.114));
+        col = mix(col, vec3(lumB), 0.6 * bt * zf);
+        col = mix(col, vec3(1.0), (0.15 + 0.10 * rnd3(row, segId, fr + 96u)) * zf);
+        col += bs * 0.06 * (rnd3(row, segId, fr + 95u) - 0.5);
     }
+    // Клон: лёгкий шум яркости по столбцам (одинаков по строкам полосы).
+    col += cw * 0.01 * (rnd3(xi, 0u, fr + 97u) - 0.5);
 
     // 4. Шум, выпадения.
     float g = rnd3(xi, row, fr + 1000u);                          // зерно, каждый кадр, в основном осветляет
@@ -312,6 +342,13 @@ void main() {
 
     // Шов головок: песок внутри зоны (сдвиг и надломы строк — выше). Светлой линии-стыка нет.
     col += inZone * (rnd3(xi, row, fr + 2000u) - 0.5) * 0.06 * p_bottomSkew;
+
+    // TBC: пустота слева (шириной tbcEdge) залита «нулём цветоразностей» — тёмно-зелёная, с шумом; край мягкий 1 px.
+    if (tbc) {
+        float tm1 = 1.0 - smoothstep(tbcEdge - 1.0, tbcEdge, px.x);
+        vec3 gcol = vec3(0.02, 0.32, 0.06) + (rnd3(xi, row, fr + 3000u) - 0.5) * 0.06;
+        col = mix(col, gcol, tm1);
+    }
 
     col = max(col, 0.0);                                          // снизу клампим: без отрицательных цветов
     fragColor = vec4(col, 1.0);

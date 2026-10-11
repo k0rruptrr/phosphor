@@ -143,6 +143,24 @@ public sealed class PhosphorConfig
     /// в стадиях tv пресетов signal: v → interference: 1 − v; в "mod" signal: {src, amount: a} → interference: {src, amount: −a}.
     /// Идемпотентно. true — что-то переписано (конфиг стоит сохранить); notes — по строке на пресет.
     /// </summary>
+    /// <summary>Новые встроенные пресеты (DefaultJson) добавить в конфиг, если пользователь их ещё не видел (см. FiltersConfig.Seen).</summary>
+    public bool MigratePresets(List<string> notes)
+    {
+        var builtin = Parse(DefaultJson).Filters.Presets;
+        var seen = new HashSet<string>(Filters.Seen ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+        bool changed = Filters.Seen is null;
+        foreach (var (name, stages) in builtin)
+        {
+            if (!seen.Add(name)) continue;
+            changed = true;
+            if (Filters.Presets.ContainsKey(name)) continue;
+            Filters.Presets[name] = stages.Clone();
+            notes.Add($"новый пресет '{name}' — добавлен");
+        }
+        Filters.Seen = seen.OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
+        return changed;
+    }
+
     public bool MigrateTvSignal(List<string> notes)
     {
         bool changed = false;
@@ -249,6 +267,8 @@ public sealed class PhosphorConfig
           "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt" } ],
           "secam":    [ { "id": "tv", "mode": "secam", "mod": { "interference": { "src": "fatigue", "amount": 0.5 } } }, { "id": "crt" } ],
           "ntsc":     [ { "id": "tv", "mode": "ntsc" }, { "id": "crt" } ],
+          "hi8":      [ { "id": "vhs", "tbc": 1, "jitter": 0.7, "wobble": 0.6, "noise": 0.04, "dropouts": 0.02, "badTracking": 0, "bottomSkew": 0.3, "tracking": 0, "saturation": 1.15, "bleed": 0.3, "lumaRes": 420, "chromaRes": 70, "iqShift": 0.5, "chromaClip": 0.15 },
+                        { "id": "crt" } ],
           "rave":     [ { "id": "chroma", "amount": 0.6, "mod": { "amount": { "src": "beatPulse", "amount": 1.2 } } },
                         { "id": "crt", "mod": { "bloom": { "src": "bass", "amount": 0.4 } } } ]
         }
@@ -305,6 +325,10 @@ public sealed class FiltersConfig
     /// <summary>Любимые пресеты: вес Shuffle.FavoriteWeight поверх «настроения» дирижёра.</summary>
     public List<string> Favorites { get; set; } = new();
     public bool FavoritesOnly { get; set; } = false;
+    /// <summary>Встроенные пресеты, о которых конфиг уже «знает». Встроенный пресет, которого здесь нет, — новый из обновления:
+    /// добавляется в Presets и сюда. null (старый конфиг) — добавляются все недостающие встроенные. Удалённый пользователем пресет
+    /// после этого не возвращается (он есть в Seen).</summary>
+    public List<string>? Seen { get; set; }
     /// <summary>Active = "shuffle": стартовый пресет случайный из доступных (это не ошибка конфига).</summary>
     public const string ShuffleActive = "shuffle";
 }

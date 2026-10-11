@@ -9,7 +9,7 @@ public class VhsFilterTests
     {
         "jitter", "tracking", "bleed", "noise", "rgbShift",
         "bottomSkew", "wobble", "saturation", "dropouts",
-        "badTracking", "bandSpeed", "iqShift", "chromaClip", "lumaRes", "chromaRes",
+        "badTracking", "bandSpeed", "iqShift", "chromaClip", "lumaRes", "chromaRes", "tbc", "bandClone",
     };
 
     private static readonly Dictionary<string, float> Defaults = new()
@@ -29,6 +29,8 @@ public class VhsFilterTests
         ["chromaClip"] = 0.4f,
         ["lumaRes"] = 1920f,
         ["chromaRes"] = 400f,
+        ["tbc"] = 0f,
+        ["bandClone"] = 0.35f,
     };
 
     private const string ShaderName = "vhs.frag";
@@ -446,55 +448,260 @@ public class VhsFilterTests
         var d = new Dictionary<string, float>
         {
             ["jitter"] = 0f, ["noise"] = 0f, ["wobble"] = 0f, ["tracking"] = 0f,
-            ["rgbShift"] = 0f, ["dropouts"] = 0f, ["bottomSkew"] = 0f, ["bleed"] = 0f,
+            ["rgbShift"] = 0f, ["dropouts"] = 0f, ["bottomSkew"] = 0f, ["bleed"] = 0f, ["bandClone"] = 0f,
             ["saturation"] = 1f, ["iqShift"] = 0f, ["chromaClip"] = 0f, ["badTracking"] = 0f,
         };
         foreach (var (k, v) in kv) d[k] = v;
         return d;
     }
 
-    /// <summary>Сдвиг строки: центроид белых пикселей (яркость > 0.5) минус базовая линия. 0, если белых мало.</summary>
-    private static float WhiteShift(float[,,] img, int y, float baseline)
+    /// <summary>Строки полосы плохого трекинга: средняя яркость строки выше медианы строк кадра на 0.03.</summary>
+    private static bool[] BandRows(float[,,] img)
+    {
+        int h = img.GetLength(0), w = img.GetLength(1);
+        var mean = new double[h];
+        for (int y = 0; y < h; y++)
+        {
+            double s = 0;
+            for (int x = 0; x < w; x++) s += GpuHarness.Luma(img, x, y);
+            mean[y] = s / w;
+        }
+        var sorted = (double[])mean.Clone();
+        Array.Sort(sorted);
+        double med = sorted[h / 2];
+        var rows = new bool[h];
+        for (int y = 0; y < h; y++) rows[y] = mean[y] > med + 0.03;
+        return rows;
+    }
+
+    [Fact]
+    public void BadTracking_Streaks_SmearRightWithConstantSegments()
+    {
+        // Тонкие белые полосы через каждые 64 px на сером. В полосе отрезки строки тянут цвет источника из начала
+        // отрезка: есть строки, где засвеченный участок у полосы ≥ 20 px, и внутри него цвет постоянен.
+        const int W = 1920, H = 540;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => { float v = x % 64 < 4 ? 1f : 0.5f; return (v, v, v); });
+        using var f = gpu.Create<VhsFilter>();
+        var img = gpu.Run(f, 0, Neutral(("badTracking", 1f)));
+        var band = BandRows(img);
+
+        // Отрезок — участок засвеченных пикселей без скачка яркости > 0.002 между соседями (внутри отрезка яркость точно постоянна) (граница отрезка).
+        bool found = false;
+        double worstSd = 0;
+        for (int y = 0; y < H; y++)
+        {
+            if (!band[y]) continue;
+            int x = 0;
+            while (x < W)
+            {
+                if (GpuHarness.Luma(img, x, y) <= 0.8f) { x++; continue; }
+                int x0 = x;
+                double s = 0, s2 = 0;
+                double prev = GpuHarness.Luma(img, x, y);
+                while (x < W)
+                {
+                    double v = GpuHarness.Luma(img, x, y);
+                    if (v <= 0.8 || Math.Abs(v - prev) > 0.002) break;
+                    s += v; s2 += v * v; prev = v; x++;
+                }
+                int n = x - x0;
+                if (n < 20) continue;
+                found = true;
+                double m = s / n;
+                worstSd = Math.Max(worstSd, Math.Sqrt(Math.Max(0, s2 / n - m * m)));
+            }
+        }
+        Assert.True(found, "нет строк с засвеченным участком у полосы ≥ 20 px (шлейф не размазывает контур вправо)");
+        Assert.True(worstSd < 0.02, $"цвет внутри засвеченного отрезка не постоянен: std {worstSd:F3}, нужно < 0.02");
+    }
+
+    [Fact]
+    public void BadTracking_Edges_AreStraightAcrossWidth()
+    {
+        // Однородный серый вход: краю полосы не должно быть «ступеньки» по x. 9-строчное сглаживание по столбцам.
+        const int W = 1920, H = 540;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0.5f, 0.5f, 0.5f));
+        using var f = gpu.Create<VhsFilter>();
+        var img = gpu.Run(f, 0, Neutral(("badTracking", 1f)));
+
+        int? refTop = null, refBot = null;
+        foreach (int x in new[] { 32, 480, 960, 1440, 1888 })
+        {
+            // Сглаженная по 9 строкам яркость столбца; край — где она переходит половину подъёма от базы (0.5) к пику.
+            var sm = new double[H];
+            for (int y = 4; y < H - 4; y++)
+            {
+                double s = 0;
+                for (int k = -4; k <= 4; k++) s += GpuHarness.Luma(img, x, y + k);
+                sm[y] = s / 9;
+            }
+            double peak = 0;
+            for (int y = 4; y < H - 4; y++) peak = Math.Max(peak, sm[y]);
+            double thr = 0.5 + 0.5 * (peak - 0.5);
+            var rows = new List<int>();
+            for (int y = 4; y < H - 4; y++)
+                if (sm[y] > thr) rows.Add(y);
+            Assert.True(peak > 0.55 && rows.Count > 0, $"в столбце {x} полосы нет (пик {peak:F3})");
+            int top = rows.Max(), bot = rows.Min();
+            refTop ??= top;
+            refBot ??= bot;
+            Assert.True(Math.Abs(top - refTop.Value) <= 1, $"верхний край в столбце {x}: строка {top}, в столбце 32: {refTop}");
+            Assert.True(Math.Abs(bot - refBot.Value) <= 1, $"нижний край в столбце {x}: строка {bot}, в столбце 32: {refBot}");
+        }
+    }
+
+    [Fact]
+    public void BadTracking_Band_MovesUpAndDown_AndChangesThickness()
+    {
+        // 600 кадров при 60 fps (10 с): центр полосы побывал в верхней и нижней половине, толщина меняется ≥ 2×.
+        const int W = 640, H = 540;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0.5f, 0.5f, 0.5f));
+        using var f = gpu.Create<VhsFilter>();
+        var o = Neutral(("badTracking", 1f));
+
+        bool upper = false, lower = false;
+        int minThick = int.MaxValue, maxThick = 0;
+        for (long fr = 0; fr < 600; fr += 3)
+        {
+            var rows = BandRows(gpu.Run(f, fr, o));
+            int cnt = 0;
+            double sum = 0;
+            for (int y = 0; y < H; y++)
+                if (rows[y]) { cnt++; sum += y; }
+            if (cnt == 0) continue;
+            double center = sum / cnt;
+            if (center > H / 2.0) upper = true; else lower = true;
+            minThick = Math.Min(minThick, cnt);
+            maxThick = Math.Max(maxThick, cnt);
+        }
+        Assert.True(upper && lower, $"центр полосы не бывал в обеих половинах кадра (верх: {upper}, низ: {lower})");
+        Assert.True(minThick > 0 && maxThick >= 2 * minThick,
+            $"толщина полосы от {minThick} до {maxThick} строк, нужно отличие ≥ 2×");
+    }
+
+    /// <summary>Центроид ярких пикселей (яркость > 0.5) строки y; NaN, если ярких мало.</summary>
+    private static double LineCentroid(float[,,] img, int y)
     {
         int w = img.GetLength(1);
         double s = 0;
         int n = 0;
         for (int x = 0; x < w; x++)
             if (GpuHarness.Luma(img, x, y) > 0.5f) { s += x; n++; }
-        return n < 200 ? 0f : (float)(s / n - baseline);
+        return n < 3 ? double.NaN : s / n;
     }
 
-    /// <summary>Строка с максимальным |сдвигом| и сам сдвиг.</summary>
-    private static (int row, float shift) MaxWhiteShift(float[,,] img, float baseline)
+    /// <summary>Ширина зелёной кромки слева в строке y: число пикселей от x=0 с G > R+0.15 и G > B+0.15 подряд.</summary>
+    private static int GreenEdgeWidth(float[,,] img, int y)
     {
-        int best = 0;
-        float bestS = 0f;
-        for (int y = 0; y < img.GetLength(0); y++)
-        {
-            float s = WhiteShift(img, y, baseline);
-            if (Math.Abs(s) > Math.Abs(bestS)) { bestS = s; best = y; }
-        }
-        return (best, bestS);
+        int x = 0;
+        while (x < img.GetLength(1) && img[y, x, 1] > img[y, x, 0] + 0.15f && img[y, x, 1] > img[y, x, 2] + 0.15f) x++;
+        return x;
     }
 
     [Fact]
-    public void BadTracking_WhiteBar_ShiftsRowsSideways_AndRollsDown()
+    public void BandClone_BandColumnsCopyTheRowAboveTheBand()
     {
-        const int W = 1920, H = 180;
-        const int x0 = 760, x1 = 1160;               // белая полоса 400 px на чёрном
-        const float baseline = (x0 + x1 - 1) / 2f;
+        // Вход: вертикальный градиент по y (g = y/H) и цветные столбцы по x (b чередуется каждые 16 px).
+        // Режим клона: строки полосы копируют строку сразу над полосой, столбец в столбец, без осветления.
+        const int W = 640, H = 540;
         using var gpu = new GpuHarness(W, H);
-        gpu.SetInput((x, y) => { float v = x >= x0 && x < x1 ? 1f : 0f; return (v, v, v); });
+        gpu.SetInput((x, y) => (x / (float)W, y / (float)H, (x / 16) % 2 == 0 ? 1f : 0f));
         using var f = gpu.Create<VhsFilter>();
-        var o = Neutral(("badTracking", 1f));
+        var img = gpu.Run(f, 0, Neutral(("badTracking", 1f), ("bandClone", 1f)));
 
-        var (r0, s0) = MaxWhiteShift(gpu.Run(f, 0, o), baseline);
-        Assert.True(Math.Abs(s0) > 20f, $"максимальный сдвиг полосы {s0:F1} px на строке {r0}, нужно > 20");
+        // Строки клона: выход по зелёному совпадает с одним и тем же значением (строка-источник), а вход там другой.
+        // Значение источника — самое частое среди строк, где выход отличается от входа (края полосы смешаны, их отбрасываем).
+        var changed = new List<int>();
+        for (int y = 0; y < H; y++)
+        {
+            double d = 0;
+            for (int x = 0; x < W; x++) d += Math.Abs(img[y, x, 1] - y / (float)H);
+            if (d / W > 0.01) changed.Add(y);
+        }
+        Assert.True(changed.Count >= 5, $"полоса клона не найдена: строк {changed.Count}");
+        var counts = changed.GroupBy(y => (int)Math.Round(img[y, 0, 1] * 1000)).OrderByDescending(gp => gp.Count()).First();
+        int src = (int)Math.Round(counts.Key / 1000.0 * H);   // строка-источник: её зелёный = y/H входа
+        var band = changed.Where(y => Math.Abs(img[y, 0, 1] - src / (float)H) < 0.005f).ToList();
+        Assert.True(band.Count >= 5, $"строк клона с цветом источника: {band.Count}");
 
-        // 240 кадров при bandSpeed 1 и 60 fps: полоса проходит половину кадра, строка максимума уходит вниз
-        var (r1, _) = MaxWhiteShift(gpu.Run(f, 240, o), baseline);
-        int down = ((r1 - r0) % H + H) % H;
-        Assert.True(down >= 0.3 * H, $"строка максимума сместилась вниз на {down} из {H} строк (нужно ≥ 30%)");
+        for (int x = 0; x < W; x += 37)
+        {
+            float er = x / (float)W, eg = src / (float)H, eb = (x / 16) % 2 == 0 ? 1f : 0f;
+            float mr = 0, mg = 0, mb = 0, sr = 0, sg = 0, sb = 0;
+            foreach (int y in band) { mr += img[y, x, 0]; mg += img[y, x, 1]; mb += img[y, x, 2]; }
+            mr /= band.Count; mg /= band.Count; mb /= band.Count;
+            foreach (int y in band)
+            {
+                sr += (img[y, x, 0] - mr) * (img[y, x, 0] - mr);
+                sg += (img[y, x, 1] - mg) * (img[y, x, 1] - mg);
+                sb += (img[y, x, 2] - mb) * (img[y, x, 2] - mb);
+            }
+            Assert.True(Math.Sqrt(sr / band.Count) < 0.01 && Math.Sqrt(sg / band.Count) < 0.01 && Math.Sqrt(sb / band.Count) < 0.01,
+                $"столбец {x}: цвет по y в полосе не постоянен");
+            Assert.True(Math.Abs(mr - er) <= 0.03 && Math.Abs(mg - eg) <= 0.03 && Math.Abs(mb - eb) <= 0.03,
+                $"столбец {x}: цвет полосы ({mr:F3},{mg:F3},{mb:F3}) не равен строке над полосой ({er:F3},{eg:F3},{eb:F3})");
+        }
+    }
+
+    [Fact]
+    public void Tbc_On_LineStaysStraightOnAllRows_Off_LineWobbles()
+    {
+        // Белая линия 4 px на сером, jitter 1: при tbc строки выровнены — центроид линии одинаков на всех строках.
+        const int W = 640, H = 180, x0 = 318, x1 = 322;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => { float v = x >= x0 && x < x1 ? 1f : 0.3f; return (v, v, v); });
+        using var f = gpu.Create<VhsFilter>();
+
+        static (double min, double max) Range(float[,,] img, int h)
+        {
+            double mn = double.MaxValue, mx = double.MinValue;
+            for (int y = 0; y < h; y++)
+            {
+                double c = LineCentroid(img, y);
+                if (double.IsNaN(c)) continue;
+                mn = Math.Min(mn, c); mx = Math.Max(mx, c);
+            }
+            return (mn, mx);
+        }
+
+        var on = Range(gpu.Run(f, 0, Neutral(("jitter", 1f), ("tbc", 1f))), H);
+        Assert.True(on.max - on.min <= 1.0, $"при tbc=1 центроид линии гуляет на {on.max - on.min:F2} px, нужно ≤ 1");
+
+        var off = Range(gpu.Run(f, 0, Neutral(("jitter", 1f), ("tbc", 0f))), H);
+        Assert.True(off.max - off.min > 1.0, $"при tbc=0 jitter должен двигать линию, размах {off.max - off.min:F2} px");
+    }
+
+    [Fact]
+    public void Tbc_On_LeftGreenEdge_WidthVariesByRow()
+    {
+        // Зелёная кромка слева: ширина = сдвиг, который компенсировал TBC. По строкам непостоянна (jitter даёт группы по 2 строки).
+        const int W = 640, H = 180;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0.3f, 0.3f, 0.3f));
+        using var f = gpu.Create<VhsFilter>();
+        var img = gpu.Run(f, 0, Neutral(("jitter", 1f), ("tbc", 1f)));
+
+        var widths = new List<double>();
+        for (int y = 0; y < H; y++) widths.Add(GreenEdgeWidth(img, y));
+        double mean = widths.Average();
+        double sd = Math.Sqrt(widths.Sum(w => (w - mean) * (w - mean)) / widths.Count);
+        Assert.True(widths.All(w => w > 0), "при tbc=1 зелёная кромка должна быть в каждой строке");
+        Assert.True(sd >= 0.5, $"std ширины кромки по строкам {sd:F2} px, нужно ≥ 0.5");
+    }
+
+    [Fact]
+    public void Tbc_Off_NoGreenEdge()
+    {
+        const int W = 640, H = 180;
+        using var gpu = new GpuHarness(W, H);
+        gpu.SetInput((x, y) => (0.3f, 0.3f, 0.3f));
+        using var f = gpu.Create<VhsFilter>();
+        var img = gpu.Run(f, 0, Neutral(("jitter", 1f), ("tbc", 0f)));
+        for (int y = 0; y < H; y++)
+            Assert.True(GreenEdgeWidth(img, y) == 0, $"при tbc=0 зелёная кромка в строке {y}");
     }
 
     [Fact]

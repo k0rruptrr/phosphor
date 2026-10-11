@@ -51,7 +51,8 @@ internal static class Program
             if (args.Mode is LaunchMode.Screensaver or LaunchMode.Windowed or LaunchMode.Configure)
             {
                 bool scenesMigrated = config.MigrateScenes(Catalog.Scenes().Ids, notes);
-                if (scenesMigrated || screenMigrated || tvMigrated)
+                bool presetsMigrated = config.MigratePresets(notes);
+                if (scenesMigrated || presetsMigrated || screenMigrated || tvMigrated)
                 {
                     foreach (var n in notes) log.Info("конфиг: " + n);
                     try { config.Save(cfgPath); log.Info("конфиг: сохранён " + cfgPath); }

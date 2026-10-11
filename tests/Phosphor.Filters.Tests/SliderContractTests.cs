@@ -56,7 +56,7 @@ public sealed unsafe class SliderContractTests
         ("edge", 0f), ("bottles", 0f), ("fibers", 0f));
     private static readonly Dictionary<string, float> VhsBase = D(("jitter", 0f), ("tracking", 0f), ("bleed", 0f),
         ("noise", 0f), ("rgbShift", 0f), ("bottomSkew", 0f), ("wobble", 0f), ("dropouts", 0f), ("badTracking", 0f),
-        ("iqShift", 0f), ("chromaClip", 0f), ("saturation", 1f), ("lumaRes", 1920f), ("chromaRes", 400f));
+        ("iqShift", 0f), ("chromaClip", 0f), ("saturation", 1f), ("lumaRes", 1920f), ("chromaRes", 400f), ("bandClone", 0f));
     private static readonly Dictionary<string, float> PhosphorBase = D(("persistence", 0f), ("color", 0f), ("brightness", 1f));
     private static readonly Dictionary<string, float> ChromaBase = D();
 

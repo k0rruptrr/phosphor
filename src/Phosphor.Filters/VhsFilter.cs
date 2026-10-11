@@ -29,6 +29,8 @@ public sealed class VhsFilter : ShaderFilter
         new ParamSpec("chromaClip", 0.4f, 0f, 1f, null, "Обрезка цветности: порог |I|,|Q| (0 — без обрезки)", "обрезка цветности"),
         new ParamSpec("lumaRes", 1920f, 200f, 1920f, null, "Разрешение яркости, отсчётов по горизонтали (1920 — выкл)", "разрешение яркости"),
         new ParamSpec("chromaRes", 400f, 20f, 400f, null, "Разрешение цвета, отсчётов по горизонтали; по вертикали вдвое хуже (400 — выкл)", "разрешение цвета"),
+        new ParamSpec("tbc", 0f, 0f, 1f, null, "TBC (стабилизатор строк), 1 — вкл: строки ровные, слева зелёная кромка на ширину сдвига (0 — выкл)", "TBC (стабилизатор)"),
+        new ParamSpec("bandClone", 0.35f, 0f, 1f, null, "Замощение полосы: вероятность режима клона по эпизодам 1.5 с (строка над полосой растянута вниз); 0 — только шлейф, 1 — только клон", "замощение полосы"),
     };
 
     private const string ChromaResource = "Phosphor.Filters.Shaders.vhs_chroma.frag";
