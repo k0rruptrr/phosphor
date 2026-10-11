@@ -24,6 +24,8 @@
                     { "id": "crt" } ],
       "pal":      [ { "id": "tv", "mode": "pal" }, { "id": "crt" } ],
       "secam":    [ { "id": "tv", "mode": "secam", "mod": { "interference": { "src": "fatigue", "amount": 0.5 } } }, { "id": "crt" } ],
+      "pal2":     [ { "id": "tv2", "mode": "pal" }, { "id": "crt" } ],
+      "secam2":   [ { "id": "tv2", "mode": "secam", "mod": { "noise": { "src": "fatigue", "amount": 0.3 } } }, { "id": "crt" } ],
       "ntsc":     [ { "id": "tv", "mode": "ntsc" }, { "id": "crt" } ],
       "hi8":      [ { "id": "vhs", "tbc": 1, "jitter": 0.7, "wobble": 0.6, "noise": 0.04, "dropouts": 0.02, "badTracking": 0, "bottomSkew": 0.3, "tracking": 0, "saturation": 1.15, "bleed": 0.3, "lumaRes": 420, "chromaRes": 70, "iqShift": 0.5, "chromaClip": 0.15 },
                     { "id": "crt" } ],
