@@ -58,6 +58,7 @@ internal sealed class SettingsForm : Form
     private readonly PickList _overlays;
     // Перебор
     private readonly CheckBox _shufScenes = new(), _shufPresets = new(), _perMonitor = new(), _beatSync = new();
+    private readonly CheckBox _exitMouse = new(), _exitMedia = new();
     private readonly NumBox _interval = new(), _transSec = new();
     private readonly ComboBox _transition = new();
     // Параметры под превью (сцена на вкладке «Сцены», пресет на «Эффектах», оверлей на «Оверлеях», экран на «Экране»)
@@ -376,6 +377,10 @@ internal sealed class SettingsForm : Form
 
         Check(p, _perMonitor, "разные сцены на мониторах", 12, 198);
         Check(p, _beatSync, "смена в такт музыке", 12, 232);
+
+        Check(p, _exitMouse, "не выходить от движения мыши", 12, 266);
+        Check(p, _exitMedia, "не выходить от медиаклавиш (громкость, плеер)", 12, 300);
+        Place(p, Lbl("←/→ — сцены, ↑/↓ — фильтры; клик или клавиша — выход", Theme.Muted), 12, 334);
     }
 
     private void BuildDimmerPage(Panel p)
@@ -649,6 +654,8 @@ internal sealed class SettingsForm : Form
         _transSec.Value = Clamp(c.Shuffle.TransitionSec, 0, 10);
         _perMonitor.Checked = c.Shuffle.PerMonitor;
         _beatSync.Checked = c.Shuffle.BeatSync;
+        _exitMouse.Checked = c.Exit.IgnoreMouseMove;
+        _exitMedia.Checked = c.Exit.IgnoreMediaKeys;
 
         _dimEnabled.Checked = c.Dimmer.Enabled;
         _dimDelay.Value = Clamp(c.Dimmer.DelayMin, 0, 240);
@@ -678,6 +685,8 @@ internal sealed class SettingsForm : Form
         c.Shuffle.TransitionSec = (float)_transSec.Value;
         c.Shuffle.PerMonitor = _perMonitor.Checked;
         c.Shuffle.BeatSync = _beatSync.Checked;
+        c.Exit.IgnoreMouseMove = _exitMouse.Checked;
+        c.Exit.IgnoreMediaKeys = _exitMedia.Checked;
 
         c.Dimmer.Enabled = _dimEnabled.Checked;
         c.Dimmer.DelayMin = (float)_dimDelay.Value;

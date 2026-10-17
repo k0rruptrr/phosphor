@@ -91,7 +91,7 @@ internal static class Program
     {
         using var win = args.Mode switch
         {
-            LaunchMode.Screensaver => ScreensaverWindow.CreateFullscreen(config.Exit.MouseThresholdPx),
+            LaunchMode.Screensaver => ScreensaverWindow.CreateFullscreen(config.Exit.MouseThresholdPx, config.Exit.IgnoreMouseMove, config.Exit.IgnoreMediaKeys),
             LaunchMode.Preview => ScreensaverWindow.CreatePreview(args.ParentHwnd),
             _ => ScreensaverWindow.CreateWindowed(args.Width, args.Height, "PHOSPHOR"),
         };
@@ -163,6 +163,8 @@ internal static class Program
             if (win.ClientWidth <= 0 || win.ClientHeight <= 0) { Thread.Sleep(16); continue; }
 
             var af = audio?.Tick(dt) ?? AudioFrame.Silent;
+            // Стрелки в заставке/оконном: команды дирижёру (всем мониторам), до его обычного хода
+            while (win.TryTakeCommand(out UserCommand cmd)) director.Command(cmd, af);
             if (af.Beat) beats++;
             if (af.Bpm > 0) lastBpm = af.Bpm;
             if (af.Active != wasActive)

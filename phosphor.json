@@ -49,5 +49,5 @@
   "network": { "enabled": true, "city": "Москва", "news": ["nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc"], "calmNews": true, "teletext": ["svt", "nos"], "satellite": ["meteosat", "himawari", "viirs"] },
   "screen": { "trail": 0 },
   "dimmer": { "enabled": false, "delayMin": 10, "fadeSec": 60, "hardware": true, "hardwareLevel": 0, "softwareLevel": 0.25 },
-  "exit": { "mouseThresholdPx": 12 }
+  "exit": { "mouseThresholdPx": 12, "ignoreMouseMove": true, "ignoreMediaKeys": true }
 }

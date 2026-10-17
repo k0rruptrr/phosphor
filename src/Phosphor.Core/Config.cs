@@ -291,7 +291,7 @@ public sealed class PhosphorConfig
       "network": { "enabled": true, "city": "Москва", "news": ["nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc"], "calmNews": true, "teletext": ["svt", "nos"], "satellite": ["meteosat", "himawari", "viirs"] },
       "screen": { "trail": 0 },
       "dimmer": { "enabled": false, "delayMin": 10, "fadeSec": 60, "hardware": true, "hardwareLevel": 0, "softwareLevel": 0.25 },
-      "exit": { "mouseThresholdPx": 12 }
+      "exit": { "mouseThresholdPx": 12, "ignoreMouseMove": true, "ignoreMediaKeys": true }
     }
     """;
 }
@@ -550,4 +550,8 @@ public sealed class ScreenConfig
 public sealed class ExitConfig
 {
     public int MouseThresholdPx { get; set; } = 12;
+    /// <summary>Не выходить от движения мыши (клики всё равно выходят).</summary>
+    public bool IgnoreMouseMove { get; set; } = true;
+    /// <summary>Не выходить от медиаклавиш и громкости (их обработает Windows).</summary>
+    public bool IgnoreMediaKeys { get; set; } = true;
 }

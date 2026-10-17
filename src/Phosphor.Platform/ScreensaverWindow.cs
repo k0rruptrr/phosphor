@@ -4,6 +4,12 @@ using Silk.NET.OpenGL;
 
 namespace Phosphor.Platform;
 
+/// <summary>Команда от стрелок в заставке и оконном режиме: сцена или пресет (фильтры).</summary>
+public enum UserCommand { NextScene, PrevScene, NextPreset, PrevPreset }
+
+/// <summary>Что делать с клавишей: Close — выйти; PassThrough — отдать Windows (громкость, медиа); Command — команда.</summary>
+public enum KeyAction { Close, PassThrough, Command }
+
 /// <summary>
 /// Окно Win32 с контекстом OpenGL 3.3 core. Чистый Win32 + WGL; Silk.NET используется только для объекта GL.
 /// Режимы: полноэкранный (/s), превью (/p), оконный (/w), скрытый (--shot).
@@ -24,7 +30,12 @@ public sealed class ScreensaverWindow : IDisposable
     private readonly Kind _kind;
     private readonly nint _parent;
     private readonly int _mouseThreshold;
+    private readonly bool _ignoreMouseMove;
+    private readonly bool _ignoreMediaKeys;
     private readonly long _createdTick;
+    // Команды от стрелок; читает главный поток (PumpEvents и WndProc в одном потоке). Ограничен, чтобы зажатая клавиша не копила очередь.
+    private readonly Queue<UserCommand> _commands = new();
+    private const int MaxQueuedCommands = 32;
     private nint _hwnd;
     private WglContext? _wgl;
     private GL? _gl;
@@ -35,24 +46,67 @@ public sealed class ScreensaverWindow : IDisposable
     private int _mouseY;
     private bool _disposed;
 
-    private ScreensaverWindow(Kind kind, nint hwnd, nint parent, int mouseThreshold)
+    private ScreensaverWindow(Kind kind, nint hwnd, nint parent, int mouseThreshold, bool ignoreMouseMove, bool ignoreMediaKeys)
     {
         _kind = kind;
         _hwnd = hwnd;
         _parent = parent;
         _mouseThreshold = mouseThreshold;
+        _ignoreMouseMove = ignoreMouseMove;
+        _ignoreMediaKeys = ignoreMediaKeys;
         _createdTick = Environment.TickCount64;
     }
 
-    /// <summary>Полноэкранный режим /s на весь виртуальный экран. Закрытие по вводу; порог — пикселей смещения мыши.</summary>
-    public static ScreensaverWindow CreateFullscreen(int mouseThresholdPx)
+    /// <summary>
+    /// Классификация клавиши. fullscreen/windowed — режим окна (превью и скрытое окно — оба false: всё отдать Windows).
+    /// Стрелки — команды в обоих режимах. Медиа/громкость: в /s при ignoreMediaKeys — отдать Windows, иначе выход.
+    /// В /s любая другая клавиша — выход; в /w выход только по Esc.
+    /// </summary>
+    public static KeyAction Classify(bool fullscreen, bool windowed, nint vk, bool ignoreMediaKeys, out UserCommand command)
+    {
+        command = default;
+        if (!fullscreen && !windowed) return KeyAction.PassThrough;
+
+        switch (vk)
+        {
+            case Win32.VK_RIGHT: command = UserCommand.NextScene; return KeyAction.Command;
+            case Win32.VK_LEFT: command = UserCommand.PrevScene; return KeyAction.Command;
+            case Win32.VK_UP: command = UserCommand.NextPreset; return KeyAction.Command;
+            case Win32.VK_DOWN: command = UserCommand.PrevPreset; return KeyAction.Command;
+        }
+
+        if (vk >= Win32.VK_VOLUME_MUTE && vk <= Win32.VK_MEDIA_PLAY_PAUSE)
+        {
+            if (!fullscreen) return KeyAction.PassThrough;
+            return ignoreMediaKeys ? KeyAction.PassThrough : KeyAction.Close;
+        }
+
+        if (fullscreen) return KeyAction.Close;
+        return vk == Win32.VK_ESCAPE ? KeyAction.Close : KeyAction.PassThrough;
+    }
+
+    /// <summary>Полноэкранный режим /s на весь виртуальный экран. Закрытие по вводу; порог — пикселей смещения мыши.
+    /// ignoreMouseMove — движение мыши не закрывает (клики закрывают); ignoreMediaKeys — медиаклавиши и громкость не закрывают.</summary>
+    public static ScreensaverWindow CreateFullscreen(int mouseThresholdPx, bool ignoreMouseMove, bool ignoreMediaKeys)
     {
         if (mouseThresholdPx < 0)
             throw new ArgumentOutOfRangeException(nameof(mouseThresholdPx), "Порог не может быть отрицательным.");
 
         MonitorRect vs = Monitors.VirtualScreen();
         return Create(Kind.Fullscreen, Win32.WS_POPUP | Win32.WS_VISIBLE, Win32.WS_EX_TOPMOST,
-            vs.X, vs.Y, vs.Width, vs.Height, 0, "PHOSPHOR", mouseThresholdPx);
+            vs.X, vs.Y, vs.Width, vs.Height, 0, "PHOSPHOR", mouseThresholdPx, ignoreMouseMove, ignoreMediaKeys);
+    }
+
+    /// <summary>Забрать следующую команду от стрелок (по одной за вызов). false — очередь пуста.</summary>
+    public bool TryTakeCommand(out UserCommand command)
+    {
+        if (_commands.Count > 0)
+        {
+            command = _commands.Dequeue();
+            return true;
+        }
+        command = default;
+        return false;
     }
 
     /// <summary>Превью /p: дочернее окно внутри parentHwnd, размер — клиентская область родителя.</summary>
@@ -170,7 +224,8 @@ public sealed class ScreensaverWindow : IDisposable
     }
 
     private static ScreensaverWindow Create(Kind kind, uint style, uint exStyle,
-        int x, int y, int width, int height, nint parent, string title, int mouseThreshold)
+        int x, int y, int width, int height, nint parent, string title, int mouseThreshold,
+        bool ignoreMouseMove = false, bool ignoreMediaKeys = false)
     {
         Dpi.EnsurePerMonitorAware();
         EnsureClassRegistered();
@@ -181,7 +236,7 @@ public sealed class ScreensaverWindow : IDisposable
         if (hwnd == 0)
             throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateWindowExW не удался.");
 
-        var window = new ScreensaverWindow(kind, hwnd, parent, mouseThreshold);
+        var window = new ScreensaverWindow(kind, hwnd, parent, mouseThreshold, ignoreMouseMove, ignoreMediaKeys);
         s_windows[hwnd] = window;
         try
         {
@@ -267,10 +322,16 @@ public sealed class ScreensaverWindow : IDisposable
 
             case Win32.WM_KEYDOWN:
             case Win32.WM_SYSKEYDOWN:
-                if (_kind == Kind.Fullscreen)
-                    ShouldClose = true;
-                else if (_kind == Kind.Windowed && wParam == Win32.VK_ESCAPE)
-                    ShouldClose = true;
+                switch (Classify(_kind == Kind.Fullscreen, _kind == Kind.Windowed, wParam, _ignoreMediaKeys, out UserCommand userCmd))
+                {
+                    case KeyAction.Close:
+                        ShouldClose = true;
+                        break;
+                    case KeyAction.Command:
+                        if (_commands.Count < MaxQueuedCommands) _commands.Enqueue(userCmd);
+                        break;
+                    // PassThrough: ниже — DefWindowProcW, Windows сама меняет громкость и шлёт медиаклавиши
+                }
                 break;
 
             case Win32.WM_LBUTTONDOWN:
@@ -286,7 +347,7 @@ public sealed class ScreensaverWindow : IDisposable
                 break;
 
             case Win32.WM_MOUSEMOVE:
-                if (_kind == Kind.Fullscreen)
+                if (_kind == Kind.Fullscreen && !_ignoreMouseMove)
                     OnFullscreenMouseMove(lParam);
                 break;
 

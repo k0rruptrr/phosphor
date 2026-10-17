@@ -124,6 +124,13 @@ internal static class Win32
     public const uint SC_MASK = 0xFFF0;
 
     public const nint VK_ESCAPE = 0x1B;
+    public const nint VK_LEFT = 0x25;
+    public const nint VK_UP = 0x26;
+    public const nint VK_RIGHT = 0x27;
+    public const nint VK_DOWN = 0x28;
+    /// <summary>Громкость и медиаклавиши: VK_VOLUME_MUTE..VK_MEDIA_PLAY_PAUSE (0xAD..0xB3).</summary>
+    public const nint VK_VOLUME_MUTE = 0xAD;
+    public const nint VK_MEDIA_PLAY_PAUSE = 0xB3;
     public const uint PM_REMOVE = 0x0001;
     public const uint MONITORINFOF_PRIMARY = 0x00000001;
 

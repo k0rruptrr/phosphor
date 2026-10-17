@@ -1,5 +1,6 @@
 using Phosphor.Core;
 using Phosphor.Gfx;
+using Phosphor.Platform;
 
 namespace Phosphor.App;
 
@@ -22,6 +23,10 @@ internal sealed class Director
     private readonly float[] _nextSwitch;
     private float _time;
 
+    // Стрелки: у каждого монитора стек прошлых (сцена, пресет) для «назад»
+    private const int HistoryCap = 32;
+    private readonly List<(string Scene, string Preset)>[] _history;
+
     // Дроп: долгое затишье, потом громко и удар
     private float _slowLevel, _quietFor, _dropCooldown;
 
@@ -40,6 +45,7 @@ internal sealed class Director
         _forcedOverlay = Environment.GetEnvironmentVariable("PHOSPHOR_OVERLAY") is { Length: > 0 } ov ? ov : null;
         _nextSwitch = new float[slots.Count];
         for (int i = 0; i < slots.Count; i++) _nextSwitch[i] = NextInterval() * (0.5f + 0.5f * i / Math.Max(1, slots.Count)); // мониторы не меняются синхронно
+        _history = slots.Select(_ => new List<(string Scene, string Preset)>()).ToArray();
 
         _forceAt = long.TryParse(Environment.GetEnvironmentVariable("PHOSPHOR_SWITCH_AT"), out var at) ? at : -1;
         _forceTo = Environment.GetEnvironmentVariable("PHOSPHOR_SWITCH_TO");
@@ -141,6 +147,51 @@ internal sealed class Director
     }
 
     /// <summary>
+    /// Ручная команда с клавиш заставки — на все мониторы. Работает и при lockScene/lockPreset (ручной выбор важнее фиксации).
+    /// Слот в переходе пропускается. После команды таймер слота перезапускается, чтобы не сменить сразу.
+    /// </summary>
+    public void Command(UserCommand c, in AudioFrame audio)
+    {
+        var now = DateTime.Now;
+        _s.Log.Info(c switch
+        {
+            UserCommand.NextScene => "клавиши: следующая сцена",
+            UserCommand.PrevScene => "клавиши: предыдущая сцена",
+            UserCommand.NextPreset => "клавиши: следующий пресет",
+            _ => "клавиши: предыдущий пресет",
+        });
+        var presetIds = Selection.PresetPool(_s.Config).Select(p => p.Id).ToList();
+        for (int i = 0; i < _slots.Count; i++)
+        {
+            var slot = _slots[i];
+            if (slot.InTransition) continue;
+            switch (c)
+            {
+                case UserCommand.NextScene:
+                    _history[i].Add((slot.Current.Scene.Id, slot.Current.PresetName));
+                    if (_history[i].Count > HistoryCap) _history[i].RemoveAt(0);
+                    SwitchScene(i, now, audio, null, null);
+                    break;
+                case UserCommand.PrevScene:
+                    if (_history[i].Count == 0) break;
+                    var (scene, preset) = _history[i][^1];
+                    _history[i].RemoveAt(_history[i].Count - 1);
+                    SwitchScene(i, now, audio, scene, null, 0, preset);
+                    break;
+                default:
+                    // Шаг по пулу пресетов; текущего в пуле нет — первый
+                    if (presetIds.Count == 0) break;
+                    int idx = presetIds.FindIndex(p => p.Equals(slot.Current.PresetName, StringComparison.OrdinalIgnoreCase));
+                    int n = presetIds.Count;
+                    int next = idx < 0 ? 0 : (idx + (c == UserCommand.NextPreset ? 1 : n - 1)) % n;
+                    slot.BeginPresetSwitch(presetIds[next], 0.6f);
+                    break;
+            }
+            _nextSwitch[i] = NextInterval();
+        }
+    }
+
+    /// <summary>
     /// Под музыку сцены меняются не по таймеру, а в такт: каждые PhraseBeats ударов — каскад по мониторам,
     /// один монитор на удар, переход длиной в долю такта. Возвращает true, пока ведёт такт (таймер стоит).
     /// </summary>
@@ -173,11 +224,11 @@ internal sealed class Director
     private int _beats, _cascade = -1;
     private float _sinceBeat = 999f;
 
-    private void SwitchScene(int i, DateTime now, in AudioFrame audio, string? forcedScene, TransitionKind? forcedKind, float beatSec = 0)
+    private void SwitchScene(int i, DateTime now, in AudioFrame audio, string? forcedScene, TransitionKind? forcedKind, float beatSec = 0, string? forcedPreset = null)
     {
         var slot = _slots[i];
         string scene = forcedScene ?? PickScene(i);
-        string preset = _lockPreset || !_s.Config.Shuffle.Presets ? slot.Current.PresetName : PickPreset(slot.Current.PresetName, now, audio);
+        string preset = forcedPreset ?? (_lockPreset || !_s.Config.Shuffle.Presets ? slot.Current.PresetName : PickPreset(slot.Current.PresetName, now, audio));
         var probe = _s.Scenes.Create(scene);
         bool handoff = probe is IHandoffReceiver;
         var kind = forcedKind ?? PickKind(handoff);
