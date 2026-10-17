@@ -7,8 +7,8 @@ namespace Phosphor.Scenes;
 /// «Пожары»: карта квадрата ±RadiusKm вокруг города (NASA FIRMS, VIIRS NOAA-20, 24 ч). Равнопромежуточная проекция
 /// с поправкой cos(широты) по долготе; пропорция клетки — из SceneOptions.CellAspect (высота/ширина), квадрат квадратный
 /// в пикселях. Сетка тусклая (через 2°). Очаги — «●» яркостью ≥ 0.85, у сильных (FRP &gt; 20) — «+» в соседних клетках;
-/// свежие (за 6 ч до выборки) — с ореолом. Кольца 100/250/500 км — пунктир секстантами; подписи колец на тёмной плашке,
-/// ставятся там, где нет очагов. Сканер — вертикальная линия: очаги вспыхивают при пересечении; рамка захвата
+/// свежие (за 6 ч до выборки) — с ореолом. Топ-5 и счётчики — по очагам (засечки ближе MergeKm склеиваются).
+/// Кольца 100/250/500 км — пунктир секстантами; подписи колец на тёмной плашке, ставятся там, где нет очагов. Сканер — вертикальная линия: очаги вспыхивают при пересечении; рамка захвата
 /// перескакивает по топ-5. Статика строится при снимке, Draw только копирует её и накладывает очаги. Без данных —
 /// сетка без центра и градусов и «NO FIRMS DATA».
 /// </summary>
@@ -33,6 +33,7 @@ public sealed class FiresScene : IScene, IDataScene, ISceneParams
     private static readonly int[] RingAngles = { 45, 225, 135, 315, 20, 200, 160, 340, 80, 260, 110, 290 };
     private const int PanelMinCols = 72, PanelMinW = 26, PanelMaxW = 34;
     private const int MaxTop = 5;
+    private const double MergeKm = 3.0;     // засечки ближе — один очаг
     private const double FreshSec = 6 * 3600.0;
     private const double HopSec = 3.0;
     private const float FlashDecay = 2.2f;
@@ -86,11 +87,16 @@ public sealed class FiresScene : IScene, IDataScene, ISceneParams
     private int[] _fireCells = Array.Empty<int>();
     private int _fireCount;
 
-    // Топ-5 по FRP (по убыванию).
+    // Топ-5 по FRP (по убыванию), по очагам; _topN — число засечек в очаге.
     private readonly FirePoint[] _topPts = new FirePoint[MaxTop];
     private readonly float[] _topFrp = new float[MaxTop];
-    private readonly int[] _topCol = new int[MaxTop], _topRow = new int[MaxTop];
+    private readonly int[] _topCol = new int[MaxTop], _topRow = new int[MaxTop], _topN = new int[MaxTop];
     private int _topCount;
+
+    // Буферы Plot (переиспользуются): засечки в квадрате и очаги-кластеры.
+    private readonly List<(FirePoint P, float Frp, int Col, int Row)> _dets = new();
+    private readonly List<Cluster> _clusters = new();
+    private readonly record struct Cluster(FirePoint Seed, float Frp, int Col, int Row, int N);
 
     // Итоги последней выборки (для панели).
     private int _lastDay, _lastNight;
@@ -420,14 +426,17 @@ public sealed class FiresScene : IScene, IDataScene, ISceneParams
         }
     }
 
-    /// <summary>Очаги в квадрат: клетки, цвет по максимальному FRP в клетке, сильные, ореолы свежих, топ-5, счётчики.</summary>
+    /// <summary>
+    /// Очаги в квадрат: клетки, цвет по максимальному FRP в клетке, сильные, ореолы свежих; топ-5 и счётчики —
+    /// по очагам (засечки ближе MergeKm склеиваются).
+    /// </summary>
     private void Plot(FireSnapshot s)
     {
         int C = _cols;
         double cosLat = Math.Cos(_cLat * Math.PI / 180);
         DateTimeOffset freshFrom = s.FetchedAt.AddSeconds(-FreshSec);
-        int day = 0, night = 0;
-        double sum = 0, max = 0;
+        double max = 0;
+        _dets.Clear();
 
         for (int i = 0; i < s.Points.Count; i++)
         {
@@ -435,11 +444,8 @@ public sealed class FiresScene : IScene, IDataScene, ISceneParams
             float frp = float.IsFinite(p.Frp) && p.Frp > 0 ? p.Frp : 0f;
             if (!CellOf(p, cosLat, out int col, out int row)) continue;
 
-            _count++;
-            if (p.Day) day++; else night++;
-            sum += frp;
             if (frp > max) max = frp;
-            InsertTop(p, frp, col, row);
+            _dets.Add((p, frp, col, row));
 
             int idx = row * C + col;
             if (_cellBits[idx] == 0) _fireCells[_fireCount++] = idx;
@@ -452,6 +458,43 @@ public sealed class FiresScene : IScene, IDataScene, ISceneParams
                 _cellNight[idx] = !p.Day;
             }
             if (p.AcquiredAt >= freshFrom) _cellFresh[idx] = true;
+        }
+
+        // Склейка засечек: по убыванию FRP, жадно; сид — сильнейшая засечка очага.
+        _dets.Sort((a, b) => b.Frp.CompareTo(a.Frp));
+        _clusters.Clear();
+        foreach (var d in _dets)
+        {
+            int hit = -1;
+            for (int k = 0; k < _clusters.Count && hit < 0; k++)
+            {
+                FirePoint sd = _clusters[k].Seed;
+                double dxKm = (d.P.Lon - sd.Lon) * KmPerDeg * cosLat;
+                double dyKm = (d.P.Lat - sd.Lat) * KmPerDeg;
+                if (dxKm * dxKm + dyKm * dyKm <= MergeKm * MergeKm) hit = k;
+            }
+            if (hit >= 0) _clusters[hit] = _clusters[hit] with { N = _clusters[hit].N + 1 };
+            else _clusters.Add(new Cluster(d.P, d.Frp, d.Col, d.Row, 1));
+        }
+
+        int day = 0, night = 0;
+        double sum = 0;
+        foreach (var c in _clusters)
+        {
+            if (c.Seed.Day) day++; else night++;
+            sum += c.Frp;
+        }
+        _count = _clusters.Count;
+
+        _topCount = Math.Min(MaxTop, _clusters.Count);   // кластеры уже по убыванию FRP
+        for (int k = 0; k < _topCount; k++)
+        {
+            Cluster c = _clusters[k];
+            _topPts[k] = c.Seed;
+            _topFrp[k] = c.Frp;
+            _topCol[k] = c.Col;
+            _topRow[k] = c.Row;
+            _topN[k] = c.N;
         }
 
         // Ореол свежих очагов: фон клетки и свободных соседей.
@@ -473,7 +516,7 @@ public sealed class FiresScene : IScene, IDataScene, ISceneParams
         _lastMax = max;
     }
 
-    /// <summary>Правая колонка: счётчики, топ-5 с координатами, азимутом и дальностью, шкала FRP.</summary>
+    /// <summary>Правая колонка: счётчики по очагам, топ-5 с координатами (× N — засечки), азимутом и дальностью, шкала FRP.</summary>
     private void DrawPanel(bool has)
     {
         int pw = PanelWidth();
@@ -493,7 +536,13 @@ public sealed class FiresScene : IScene, IDataScene, ISceneParams
         {
             FirePoint p = _topPts[k];
             int y = 10 + 2 * k;
-            _base.Text(x0, y, (k + 1).ToString("D2", Inv) + "  " + Coord(p.Lat, "N", "S") + " " + Coord(p.Lon, "E", "W"), Warm);
+            string line = (k + 1).ToString("D2", Inv) + "  " + Coord(p.Lat, "N", "S") + " " + Coord(p.Lon, "E", "W");
+            if (_topN[k] > 1)
+            {
+                string withN = line + " ×" + _topN[k].ToString(Inv);
+                if (x0 + withN.Length - 1 <= xr) line = withN;
+            }
+            _base.Text(x0, y, line, Warm);
             double dxKm = (p.Lon - _cLon) * KmPerDeg * cosLat;
             double dyKm = (p.Lat - _cLat) * KmPerDeg;
             double az = Math.Atan2(dxKm, dyKm) * 180 / Math.PI;
@@ -528,25 +577,6 @@ public sealed class FiresScene : IScene, IDataScene, ISceneParams
         col = sx >> 1;
         row = sy / 3;
         return col < _cols && row < _rows;
-    }
-
-    /// <summary>Держит топ-5 по убыванию FRP.</summary>
-    private void InsertTop(FirePoint p, float frp, int col, int row)
-    {
-        if (_topCount == MaxTop && frp <= _topFrp[MaxTop - 1]) return;
-        int k = _topCount < MaxTop ? _topCount++ : MaxTop - 1;
-        while (k > 0 && _topFrp[k - 1] < frp)
-        {
-            _topPts[k] = _topPts[k - 1];
-            _topFrp[k] = _topFrp[k - 1];
-            _topCol[k] = _topCol[k - 1];
-            _topRow[k] = _topRow[k - 1];
-            k--;
-        }
-        _topPts[k] = p;
-        _topFrp[k] = frp;
-        _topCol[k] = col;
-        _topRow[k] = row;
     }
 
     private void Glow(int x, int y, bool onlyFree)

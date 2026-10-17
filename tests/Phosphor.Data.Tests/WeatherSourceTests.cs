@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Phosphor.Core;
 using Xunit.Abstractions;
 
@@ -144,10 +145,13 @@ public sealed class WeatherSourceTests
     [Fact]
     public async Task OpenMeteoDown_FallsBackToMetNo()
     {
-        // Даты фикстуры (2026-10-09) сдвигаем на сегодня: источник отбрасывает прошедшие дни.
-        var today = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var body = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "weather-metno-moscow.json"))
-            .Replace("2026-10-09T", today + "T", StringComparison.Ordinal);
+        // Все даты фикстуры (с 2026-10-09) сдвигаем так, чтобы первый день стал сегодняшним: источник отбрасывает прошедшие дни.
+        var shift = DateTime.UtcNow.Date - new DateTime(2026, 10, 9);
+        var body = Regex.Replace(
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "weather-metno-moscow.json")),
+            @"\d{4}-\d{2}-\d{2}(?=T)",
+            m => DateTime.ParseExact(m.Value, "yyyy-MM-dd", CultureInfo.InvariantCulture).Add(shift)
+                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         var fake = new FakeHttp()
             .OnFile("geocoding-api.open-meteo.com", "weather-geo-moscow.json")
             .On("api.met.no/weatherapi/locationforecast/2.0/compact", body);

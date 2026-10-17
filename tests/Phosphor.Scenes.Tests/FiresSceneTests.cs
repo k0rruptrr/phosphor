@@ -126,6 +126,51 @@ public sealed class FiresSceneTests
         Assert.True(fireAvg >= 2.5 * ringAvg, $"очаг {fireAvg:F0} не в 2.5 раза ярче кольца {ringAvg:F0}");
     }
 
+    [Fact]
+    public void NearbyDetectionsMergeIntoOneTopEntry()
+    {
+        // Три засечки одного очага: 2 МВт в точке, ещё две в 0.5 и 1 км к востоку (меньше MergeKm).
+        var s = Start(Snap(
+            Fire(CLat, CLon + 50 / KmPerLon, 2f),
+            Fire(CLat, CLon + 50.5 / KmPerLon, 1f),
+            Fire(CLat, CLon + 51 / KmPerLon, 1f)));
+        SceneContract.Run(s, 30);
+        var g = SceneContract.Snap(s, Cols, Rows);
+
+        int numbered = 0;
+        for (int y = 0; y < g.Rows; y++)
+            if (System.Text.RegularExpressions.Regex.IsMatch(RowText(g, y), @"\b0[1-5]  \d")) numbered++;
+        Assert.Equal(1, numbered);
+        Assert.True(AnyRowContains(g, "×3"), "нет отметки ×3 у очага");
+        Assert.True(System.Text.RegularExpressions.Regex.IsMatch(FirstRowWith(g, "ВСЕГО") ?? "", @"ВСЕГО\s+1\b"), "ВСЕГО должно быть 1");
+    }
+
+    [Fact]
+    public void DistantFiresStaySeparate()
+    {
+        // Два очага в 50 км друг от друга: две строки топа, без отметки ×.
+        var s = Start(Snap(Fire(CLat, CLon + 20 / KmPerLon, 30f), Fire(CLat, CLon + 70 / KmPerLon, 10f)));
+        SceneContract.Run(s, 30);
+        var g = SceneContract.Snap(s, Cols, Rows);
+
+        int numbered = 0;
+        for (int y = 0; y < g.Rows; y++)
+            if (System.Text.RegularExpressions.Regex.IsMatch(RowText(g, y), @"\b0[1-5]  \d")) numbered++;
+        Assert.Equal(2, numbered);
+        Assert.False(AnyRowContains(g, "×"), "у раздельных очагов не должно быть ×");
+        Assert.True(System.Text.RegularExpressions.Regex.IsMatch(FirstRowWith(g, "ВСЕГО") ?? "", @"ВСЕГО\s+2\b"), "ВСЕГО должно быть 2");
+    }
+
+    private static string? FirstRowWith(CharGrid g, string text)
+    {
+        for (int y = 0; y < g.Rows; y++)
+        {
+            string t = RowText(g, y);
+            if (t.Contains(text, StringComparison.Ordinal)) return t;
+        }
+        return null;
+    }
+
     private static int Lum(Rgba c) => c.R + c.G + c.B;
 
     // ---------- helpers ----------
