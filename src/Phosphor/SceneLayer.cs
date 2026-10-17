@@ -41,7 +41,13 @@ internal sealed class SceneLayer : IDisposable
         int cellH = Scene is IPreferredRows pr && pr.PreferredRows > 0
             ? Math.Clamp(vpH / pr.PreferredRows, 8, 64)
             : defaultCellHeight;
-        _font = s.FontFor(cellH);
+        // Шрифт сцены: scenes.params.<id>.font → IPreferredFont → общий text.font
+        string? family = SceneFont.Resolve(
+            s.Config.SceneOptionsFor(sceneId).GetString("font", ""),
+            (Scene as IPreferredFont)?.PreferredFont,
+            f => Phosphor.Text.FontCatalog.Find(f) is not null,
+            m => s.Log.Warn($"[{index}] {sceneId}: {m}"));
+        _font = s.FontFor(cellH, family);
         int cols = Math.Max(1, vpW / _font.Atlas.CellWidth);
         int rows = Math.Max(1, vpH / _font.Atlas.CellHeight);
         _grid = new CharGrid(cols, rows);
@@ -64,7 +70,7 @@ internal sealed class SceneLayer : IDisposable
         }
 
         SetPreset(preset);
-        s.Log.Info($"[{index}] сцена {sceneId} {cols}x{rows} (ячейка {_font.Atlas.CellWidth}x{_font.Atlas.CellHeight}){(Overlay is null ? "" : $", оверлей {Overlay.Id}")}");
+        s.Log.Info($"[{index}] сцена {sceneId} {cols}x{rows} (ячейка {_font.Atlas.CellWidth}x{_font.Atlas.CellHeight}){(family is null ? "" : $", шрифт {family}")}{(Overlay is null ? "" : $", оверлей {Overlay.Id}")}");
     }
 
     public void SetPreset(string name)

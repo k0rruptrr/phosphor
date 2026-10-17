@@ -37,6 +37,42 @@ public sealed partial class SettingsModel
     /// <summary>«По умолчанию» у одного параметра: ключ удаляется.</summary>
     public void ResetSceneParam(string sceneId, SceneParamSpec spec) => SetSceneParam(sceneId, spec, spec.Default);
 
+    /// <summary>Шрифт по умолчанию сцены (IPreferredFont); null — общий text.font.</summary>
+    public string? ScenePreferredFont(string sceneId) => _specs.PreferredFont(sceneId);
+
+    /// <summary>Строка scenes.params.&lt;id&gt;.&lt;key&gt; (шрифт сцены); нет ключа — "".</summary>
+    public string SceneString(string sceneId, string key)
+    {
+        var root = Config.Scenes.Params;
+        if (root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(sceneId, out var sc) && sc.ValueKind == JsonValueKind.Object
+            && sc.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
+            return v.GetString() ?? "";
+        return "";
+    }
+
+    /// <summary>Записать строку scenes.params.&lt;id&gt;.&lt;key&gt;. Пусто — ключ удаляется (пустой объект сцены тоже).</summary>
+    public void SetSceneString(string sceneId, string key, string value)
+    {
+        var obj = ToObject(Config.Scenes.Params);
+        var scene = obj[sceneId] as JsonObject;
+        if (value.Length == 0)
+        {
+            scene?.Remove(key);
+        }
+        else
+        {
+            if (scene is null)
+            {
+                scene = new JsonObject();
+                obj[sceneId] = scene;
+            }
+            scene[key] = JsonValue.Create(value);
+        }
+        if (scene is not null && scene.Count == 0) obj.Remove(sceneId);
+        Config.Scenes.Params = ToElement(obj);
+    }
+
     /// <summary>«Все по умолчанию»: удаляются ключи параметров сцены из её описания (неизвестные ключи остаются).</summary>
     public void ResetSceneParams(string sceneId)
     {

@@ -73,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 Результат:
 - `dist\PHOSPHOR-<версия>\` и `dist\PHOSPHOR-<версия>.zip`, где версия — `ProductVersion` exe с `+` заменённым на `-` (например `PHOSPHOR-0.7.0-70ba44e.zip`). Путь и размер zip печатаются в конце.
 - Внутри: `Phosphor.exe` (`Phosphor.scr` делает `install.ps1`, в пакет он не входит), `phosphor.json` (копия из репозитория), `install.ps1`, `uninstall.ps1`, `Установить.bat`, `Удалить.bat`, `ПРОЧТИ.txt` (инструкция для получателя).
-- Папка `fonts\` (встроенные шрифты IBM Plex Mono, VT323, Press Start 2P и файлы лицензий OFL-*.txt): попадает в zip и ставится `install.ps1` в `%LOCALAPPDATA%\Programs\Phosphor\fonts\`.
+- Папка `fonts\` (встроенные шрифты IBM Plex Mono, VT323, Press Start 2P, Fixedsys Excelsior, Bedstead и файлы лицензий): попадает в zip и ставится `install.ps1` в `%LOCALAPPDATA%\Programs\Phosphor\fonts\`.
 
 - `dist\PHOSPHOR-Setup-<x.y.z>.exe` — установщик в один клик (Inno Setup 6, сценарий `scripts\package\phosphor.iss`). Внутри тот же пакет: установщик распаковывает его во временную папку и запускает `install.ps1`, удаление вызывает `uninstall.ps1 -RegistryOnly` и убирает папку. Если Inno Setup не установлен, шаг пропускается с предупреждением (`winget install JRSoftware.InnoSetup --scope user`).
 
@@ -201,8 +201,10 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 Шрифт сетки задаётся ключом `text.font` (по умолчанию `"Consolas"`) или во вкладке «Шрифт» окна настроек (`/c`). Значение — имя семейства из перечня или путь к `.ttf`/`.otf`/`.ttc`.
 
 - Перечень — только моноширинные шрифты (равные advance у `i`, `M`, `W`, `0`) из трёх мест: встроенные (папка `fonts` рядом с exe), пользовательские (`%LOCALAPPDATA%\Microsoft\Windows\Fonts`) и системные (`C:\Windows\Fonts`). У семейства берётся Regular.
-- Встроенные (OFL, файлы лицензий в `assets\fonts\`): IBM Plex Mono, VT323, Press Start 2P.
+- Встроенные (файлы лицензий в `assets\fonts\`): IBM Plex Mono, VT323, Press Start 2P (OFL 1.1, `OFL-*.txt`); Fixedsys Excelsior (public domain / CC0, `LICENSE-FixedsysExcelsior.txt`); Bedstead (CC0 1.0, `COPYING-Bedstead.txt`).
 - Шрифт не найден — Consolas и предупреждение в логе. Ширина ячейки — по шрифту, высота — `cellHeightPx`. Псевдографика (рамки, блоки, секстанты) рисуется процедурно и от шрифта не зависит.
+
+Телетекст по умолчанию рисуется шрифтом Bedstead. Шрифт любой сцены меняется в её параметрах (строка «шрифт» на вкладке «Сцены»): ключ `scenes.params.<id>.font`; пункт «по умолчанию» — шрифт, который выбран для сцены, без ключа — общий `text.font`.
 
 ## Сцены и фильтры
 
@@ -438,7 +440,7 @@ PHOSPHOR берёт открытые данные сторонних серви�
 
 Рамка корпуса и стекло экрана (`screen`) сделаны по мотивам [cool-retro-term](https://github.com/Swordfish90/cool-retro-term) (Swordfish90): приёмы изучены, код свой.
 
-Шрифты (`assets/fonts`) — IBM Plex Mono, VT323 и Press Start 2P, лицензия SIL Open Font License 1.1, тексты лицензий лежат рядом: `OFL-IBMPlexMono.txt`, `OFL-VT323.txt`, `OFL-PressStart2P.txt`.
+Шрифты (`assets/fonts`) — IBM Plex Mono, VT323 и Press Start 2P (лицензия SIL Open Font License 1.1, тексты лежат рядом: `OFL-IBMPlexMono.txt`, `OFL-VT323.txt`, `OFL-PressStart2P.txt`); Fixedsys Excelsior (public domain / CC0, `LICENSE-FixedsysExcelsior.txt`); Bedstead (CC0 1.0, `COPYING-Bedstead.txt`).
 
 ## Сеть и Fort Firewall
 
@@ -482,4 +484,4 @@ powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1 -KeepConfig
 
 ## Лицензия
 
-Код — [MIT](LICENSE). Встроенные шрифты — SIL OFL 1.1 (assets/fonts). Данные из сети принадлежат своим источникам (см. «Источники данных и благодарности»).
+Код — [MIT](LICENSE). Встроенные шрифты — SIL OFL 1.1 (IBM Plex Mono, VT323, Press Start 2P), public domain / CC0 (Fixedsys Excelsior, Bedstead) — assets/fonts. Данные из сети принадлежат своим источникам (см. «Источники данных и благодарности»).

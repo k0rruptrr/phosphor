@@ -19,5 +19,6 @@
   <!-- Встроенные шрифты для тестов FontCatalog/GlyphRasterizer: как у exe — fonts\ рядом с dll -->
   <ItemGroup>
     <None Include="..\..\assets\fonts\*.ttf" Link="fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\assets\fonts\*.otf" Link="fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

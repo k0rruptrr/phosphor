@@ -18,14 +18,19 @@ public sealed class SettingsSpecs
     /// <summary>Параметры оверлея или бирки по id (IOverlayParams.Params); null — не реализует IOverlayParams.</summary>
     public Func<string, IReadOnlyList<SceneParamSpec>?> Overlay { get; }
 
+    /// <summary>Шрифт по умолчанию сцены (IPreferredFont) по id; null — не реализует, берётся общий text.font.</summary>
+    public Func<string, string?> PreferredFont { get; }
+
     public SettingsSpecs(
         Func<string, IReadOnlyList<ParamSpec>?> filter,
         Func<string, IReadOnlyList<SceneParamSpec>?> scene,
-        Func<string, IReadOnlyList<SceneParamSpec>?>? overlay = null)
+        Func<string, IReadOnlyList<SceneParamSpec>?>? overlay = null,
+        Func<string, string?>? preferredFont = null)
     {
         Filter = filter;
         Scene = scene;
         Overlay = overlay ?? (_ => null);
+        PreferredFont = preferredFont ?? (_ => null);
     }
 
     /// <summary>Из каталога приложения. Реестры создаются при первом обращении; фильтры, сцены и оверлеи создаются без Init (GL не нужен).</summary>
@@ -65,6 +70,13 @@ public sealed class SettingsSpecs
                     finally { (badge as IDisposable)?.Dispose(); }
                 }
                 return null;
+            },
+            id =>
+            {
+                if (!scenes.Value.Has(id)) return null;
+                var scene = scenes.Value.Create(id);
+                try { return (scene as IPreferredFont)?.PreferredFont; }
+                finally { (scene as IDisposable)?.Dispose(); }
             });
     }
 }

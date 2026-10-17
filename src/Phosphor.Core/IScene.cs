@@ -70,6 +70,15 @@ public interface IPreferredRows
     int PreferredRows { get; }
 }
 
+/// <summary>
+/// Необязательно. Семейство шрифта по умолчанию для сцены (телетекст — Bedstead). null — общий text.font.
+/// Пользователь переопределяет ключом scenes.params.&lt;id&gt;.font (пусто — ключа нет, берётся это значение).
+/// </summary>
+public interface IPreferredFont
+{
+    string? PreferredFont { get; }
+}
+
 /// <summary>Необязательно. Сцена с этим интерфейсом получает звук перед каждым Update.</summary>
 public interface IAudioReactive
 {

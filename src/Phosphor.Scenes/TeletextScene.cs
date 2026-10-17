@@ -6,7 +6,7 @@ namespace Phosphor.Scenes;
 /// Телетекст: страницы европейских каналов (NOS, SVT...) с переключением как на старом телевизоре.
 /// Данные приходят от хоста ("teletext", "clock"); без данных рисуется процедурная заглушка.
 /// </summary>
-public sealed class TeletextScene : IScene, IDataScene, IPreferredRows, ISceneParams
+public sealed class TeletextScene : IScene, IDataScene, IPreferredRows, IPreferredFont, ISceneParams
 {
     // Параметры для окна настроек.
     public static readonly SceneParamSpec SearchSpec = new("searchTime", SceneParamKind.Float, 1.2f, 0f, 5f, "поиск страницы, с");
@@ -28,6 +28,7 @@ public sealed class TeletextScene : IScene, IDataScene, IPreferredRows, IScenePa
 
     public string Id => "teletext";
     public int PreferredRows => 30;
+    public string? PreferredFont => "Bedstead";
     public IReadOnlyList<string> DataKeys => Keys;
 
     private Random _rng = new(0);

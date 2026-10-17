@@ -1045,14 +1045,61 @@ internal sealed class SettingsForm : Form
         _paramsTitle.Text = $"Параметры сцены «{id}»";
         var specs = id.Length > 0 ? _model.SceneSpecs(id) : null;
         _sceneResetAll.Enabled = specs is { Count: > 0 };
+        var labels = new List<string>();
+        if (id.Length > 0) labels.Add(SceneFontLabel);
+        if (specs is not null) labels.AddRange(specs.Select(s => LabelText(s.Name, s.Description)));
+        _labelCol = LabelColumn(labels);
+        if (id.Length > 0) _params.AddRow(SceneFontRow(id));
         if (specs is null || specs.Count == 0)
         {
-            _labelCol = LabelColumn(Array.Empty<string>());
             _params.AddRow(NoteRow("у этой сцены нет настроек"));
             return;
         }
-        _labelCol = LabelColumn(specs.Select(s => LabelText(s.Name, s.Description)));
         foreach (var spec in specs) _params.AddRow(SceneParamRow(id, spec));
+    }
+
+    private const string SceneFontLabel = "шрифт";
+
+    /// <summary>Шрифт сцены (scenes.params.&lt;id&gt;.font). Первый пункт: «по умолчанию (шрифт сцены)» у IPreferredFont, иначе «общий (text.font)»; пусто — ключа нет.</summary>
+    private Panel SceneFontRow(string sceneId)
+    {
+        string? preferred = _model.ScenePreferredFont(sceneId);
+        string firstText = preferred is null ? $"общий ({_model.Config.Text.Font})" : $"по умолчанию ({preferred})";
+        var (row, value, reset) = ParamRow("font", SceneFontLabel, "шрифт сцены; первый пункт — то, что выбрано без ключа font");
+        var combo = new ParamCombo { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(_labelCol, 3), Size = ComboSize(24) };
+        combo.Items.Add(new Choice("", firstText));
+        foreach (var e in FontCatalog.List())
+            combo.Items.Add(new Choice(e.Family, e.Builtin ? $"{e.Family} · встроенный" : e.Family));
+        string cur = _model.SceneString(sceneId, "font");
+        int idx = cur.Length == 0 ? 0 : combo.Items.Cast<Choice>().ToList().FindIndex(ch => string.Equals(ch.Value, cur, StringComparison.OrdinalIgnoreCase));
+        if (cur.Length > 0 && idx < 0)
+        {
+            // Шрифт из конфига не найден в перечне — показываем как есть (как во FontRow оверлеев)
+            combo.Items.Insert(1, new Choice(cur, cur + " · не найден"));
+            idx = 1;
+        }
+        combo.SelectedIndex = idx;
+        value.Text = "";
+
+        void Refresh() => reset.Enabled = _model.SceneString(sceneId, "font").Length > 0;
+        combo.SelectedIndexChanged += (_, _) =>
+        {
+            if (combo.SelectedItem is not Choice ch) return;
+            _model.SetSceneString(sceneId, "font", ch.Value);
+            Refresh();
+            OnParamEdited();
+        };
+        reset.Click += (_, _) =>
+        {
+            _model.SetSceneString(sceneId, "font", "");
+            combo.SelectedIndex = 0;
+            Refresh();
+            OnParamEdited();
+        };
+        Refresh();
+        row.Controls.Add(combo);
+        FinishParamRow(row, value, reset, "по умолчанию: " + (preferred ?? "общий text.font"));
+        return row;
     }
 
     private void BuildFilterRows()
