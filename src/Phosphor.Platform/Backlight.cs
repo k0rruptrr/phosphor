@@ -113,6 +113,27 @@ public sealed class Backlight : IDisposable
             _log("Backlight: восстановление не уложилось в таймаут, выполнится в фоне");
     }
 
+    /// <summary>
+    /// «Моргнуть» монитором из окна настроек: увести подсветку в минимум (если она и так у минимума — в максимум)
+    /// на holdMs и вернуть исходную. Пользователь глазами видит, слушается ли монитор (врёт ли он по DDC).
+    /// Блокирующий: до ~10 с опроса + holdMs + восстановление. Возвращает строку для статуса.
+    /// </summary>
+    public string Blink(string device, int holdMs = 1200, Action<int>? sleep = null)
+    {
+        sleep ??= Thread.Sleep;
+        for (int waited = 0; !Ready && waited < 10_000; waited += 50) sleep(50);
+        if (!Ready) return "опрос DDC/CI не уложился в 10 с";
+        BacklightInfo? m = null;
+        foreach (var x in _monitors)
+            if (string.Equals(x.DeviceName, device, StringComparison.OrdinalIgnoreCase)) m = x;
+        if (m is null || !m.Hardware) return "монитор не отвечает по DDC/CI — моргнуть нечем";
+        float orig = m.Max > m.Min ? (m.Original - m.Min) / (float)(m.Max - m.Min) : 1f;
+        Request(device, orig >= 0.3f ? 0f : 1f);
+        sleep(holdMs);
+        RestoreAll(TimeSpan.FromSeconds(5));
+        return "моргнул: если экран мигнул — подсветка слушается";
+    }
+
     /// <summary>Восстановление после падения: журнал есть — то же правило, что в RestoreAll, затем удалить журнал.</summary>
     public static void RecoverFromJournal(string journalPath, IDdcPort port, Action<string> log)
     {

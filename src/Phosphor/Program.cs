@@ -129,11 +129,13 @@ internal static class Program
         var dimmer = config.Dimmer;
         string journalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Phosphor", "backlight-journal.json");
         // Имена устройств в том же порядке, что и слоты (BuildSlots берёт Monitors.Enumerate в том же порядке)
-        var devNames = args.Mode == LaunchMode.Screensaver ? Monitors.Enumerate().Select(m => m.Name).ToArray() : Array.Empty<string>();
+        // Ключ и модель — для режима по монитору (dimmer.monitors): номер DISPLAYn может смениться, ключ — нет
+        var devIds = args.Mode == LaunchMode.Screensaver ? MonitorIdentities.Describe(Monitors.Enumerate()).ToArray() : Array.Empty<MonitorIdentity>();
+        var devNames = devIds.Select(m => m.Device).ToArray();
         var gains = new float[slots.Count];
         bool dimLogged = false, dimStarted = false;
         // Dispose восстанавливает яркость: using — и при выходе, и при исключении.
-        using var backlight = args.Mode == LaunchMode.Screensaver && ((dimmer.Enabled && dimmer.Hardware) || File.Exists(journalPath))
+        using var backlight = args.Mode == LaunchMode.Screensaver && ((dimmer.Enabled && DimmerCurve.AnyBacklight(dimmer)) || File.Exists(journalPath))
             ? Backlight.Start(journalPath, m => log.Info(m))
             : null;
 
@@ -190,29 +192,37 @@ internal static class Program
             // мониторы без DDC — множитель картинки.
             float dimProgress = args.Mode == LaunchMode.Screensaver ? DimmerCurve.Progress(dimmer, now) : 0f;
             if (dimProgress > 0 && !dimStarted) { dimStarted = true; log.Info("диммер: гашу"); }
-            if (backlight is { Ready: true } bl && !dimLogged)
+            if (!dimLogged && dimmer.Enabled && args.Mode == LaunchMode.Screensaver && (backlight is null || backlight.Ready))
             {
                 dimLogged = true;
-                var hw = new List<string>();
-                var soft = new List<string>();
-                for (int i = 0; i < slots.Count; i++)
+                var parts = new List<string>();
+                for (int i = 0; i < slots.Count && i < devIds.Length; i++)
                 {
-                    string dev = i < devNames.Length ? devNames[i] : "?";
-                    if (i < devNames.Length && bl.IsHardware(dev)) hw.Add(dev); else soft.Add(dev);
+                    var id = devIds[i];
+                    var m = DimmerCurve.Method(dimmer, id.Key, backlight?.IsHardware(id.Device) ?? false);
+                    parts.Add($"{id.Device} {id.Model} [{DimmerCurve.ModeOf(dimmer, id.Key)}] → " +
+                              (m == DimMethod.Backlight ? "подсветка DDC" : m == DimMethod.Software ? "картинка" : "не трогаю"));
                 }
-                log.Info($"диммер: подсветка DDC — {(hw.Count == 0 ? "нет" : string.Join(", ", hw))}; затемнение картинки — {(soft.Count == 0 ? "нет" : string.Join(", ", soft))}");
+                log.Info("диммер: " + string.Join("; ", parts));
             }
             float softGain = DimmerCurve.SoftwareGain(dimmer, dimProgress);
             for (int i = 0; i < slots.Count; i++)
             {
                 gains[i] = 1f;
-                string? dev = i < devNames.Length ? devNames[i] : null;
-                if (backlight is { Ready: true } hwBl && dev is not null && hwBl.IsHardware(dev))
+                if (i >= devIds.Length) { gains[i] = softGain; continue; }
+                var id = devIds[i];
+                // До конца опроса DDC монитор считается неотвечающим (картинка), как и раньше
+                bool ddc = backlight is { Ready: true } && backlight.IsHardware(id.Device);
+                switch (DimmerCurve.Method(dimmer, id.Key, ddc))
                 {
-                    if (dimProgress > 0)
-                        hwBl.Request(dev, DimmerCurve.HardwareLevel(dimmer, OriginalLevel01(hwBl, dev), dimProgress));
+                    case DimMethod.Backlight:
+                        if (dimProgress > 0)
+                            backlight!.Request(id.Device, DimmerCurve.HardwareLevel(dimmer, OriginalLevel01(backlight, id.Device), dimProgress));
+                        break;
+                    case DimMethod.Software:
+                        gains[i] = softGain;
+                        break;
                 }
-                else gains[i] = softGain;
             }
 
             gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);

@@ -80,6 +80,19 @@ internal sealed class SettingsForm : Form
     private readonly Button _probe = new();
     private readonly Label _probeStatus = new();
     private readonly ListView _monitors = new();
+    private readonly ComboBox _monMode = new();
+    private readonly Button _blink = new();
+    // Режим по монитору (ключ MonitorIdentity.Key → auto/ddc/software/off); строки таблицы — в порядке Monitors.Enumerate
+    private readonly Dictionary<string, string> _monModes = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<MonitorIdentity> _monIds = Array.Empty<MonitorIdentity>();
+    private readonly Dictionary<string, BacklightInfo> _monDdc = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Choice[] MonModeChoices =
+    {
+        new(DimmerConfig.ModeAuto, "авто"),
+        new(DimmerConfig.ModeDdc, "подсветка DDC"),
+        new(DimmerConfig.ModeSoftware, "картинкой"),
+        new(DimmerConfig.ModeOff, "не трогать"),
+    };
     // Сеть
     private readonly CheckBox _netEnabled = new();
     private readonly TextBox _city = new();
@@ -410,9 +423,26 @@ internal sealed class SettingsForm : Form
         p.Controls.Add(_probeStatus);
 
         _monitors.Location = new Point(12, 280);
-        _monitors.Size = new Size(568, 210);
+        _monitors.Size = new Size(568, 150);
         StyleMonitorList();
         p.Controls.Add(_monitors);
+
+        // Режим выбранного монитора: DDC «врёт» у некоторых (отвечает, но не слушается) — тогда «картинкой»
+        Place(p, Lbl("выбранный монитор:"), 12, 446);
+        _monMode.DropDownStyle = ComboBoxStyle.DropDownList;
+        _monMode.Location = new Point(LabelCol(DimmerLabels), 442);
+        _monMode.Size = new Size(150, 24);
+        _monMode.Items.AddRange(MonModeChoices);
+        _monMode.SelectedIndexChanged += (_, _) => SetSelectedMonitorMode();
+        p.Controls.Add(_monMode);
+        _blink.Text = "моргнуть";
+        _blink.Location = new Point(LabelCol(DimmerLabels) + 162, 440);
+        _blink.Size = new Size(110, 28);
+        _blink.Enabled = false;
+        _blink.Click += (_, _) => StartBlink();
+        p.Controls.Add(_blink);
+        _monitors.SelectedIndexChanged += (_, _) => ShowSelectedMonitorMode();
+        Place(p, Lbl("«моргнуть» на секунду гасит подсветку: видно, слушается ли монитор", Theme.Muted), 12, 478);
     }
 
     /// <summary>Таблица мониторов рисуется сама: нативные белые заголовки и линии не нужны.</summary>
@@ -427,10 +457,10 @@ internal sealed class SettingsForm : Form
         _monitors.BackColor = Theme.Panel;
         _monitors.ForeColor = Theme.Text;
         _monitors.Font = Theme.Mono;
-        _monitors.Columns.Add("монитор", 170);
-        _monitors.Columns.Add("DDC/CI", 80);
-        _monitors.Columns.Add("min–cur–max", 130);
-        _monitors.Columns.Add("причина", 170);
+        _monitors.Columns.Add("монитор", 190);
+        _monitors.Columns.Add("DDC/CI", 70);
+        _monitors.Columns.Add("min–cur–max", 120);
+        _monitors.Columns.Add("режим", 170);
         _monitors.DrawColumnHeader += (_, e) =>
         {
             using (var b = new SolidBrush(Theme.Bg)) e.Graphics.FillRectangle(b, e.Bounds);
@@ -444,9 +474,10 @@ internal sealed class SettingsForm : Form
         };
         _monitors.DrawSubItem += (_, e) =>
         {
-            using (var b = new SolidBrush(Theme.Panel)) e.Graphics.FillRectangle(b, e.Bounds);
+            bool sel = e.Item?.Selected == true;   // выбранный монитор — для выпадашки режима и «моргнуть»
+            using (var b = new SolidBrush(sel ? Theme.Select : Theme.Panel)) e.Graphics.FillRectangle(b, e.Bounds);
             TextRenderer.DrawText(e.Graphics, e.SubItem?.Text ?? "", Theme.Mono, new Rectangle(e.Bounds.X + 6, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height),
-                Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+                sel ? Theme.Accent : Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
         };
         _monitors.HandleCreated += (_, _) => Theme.DarkScrollbars(_monitors);
         // Последняя колонка растягивается до края: иначе справа остаётся светлый кусок заголовка
@@ -663,6 +694,9 @@ internal sealed class SettingsForm : Form
         _dimHw.Checked = c.Dimmer.Hardware;
         _dimHwLevel.Value = Clamp(c.Dimmer.HardwareLevel, 0, 100);
         _dimSwLevel.Value = Clamp(c.Dimmer.SoftwareLevel * 100, 0, 100);
+        _monModes.Clear();
+        foreach (var (k, v) in c.Dimmer.Monitors) _monModes[k] = v;
+        RefreshMonitorRows();
 
         _netEnabled.Checked = c.Network.Enabled;
         _city.Text = c.Network.City;
@@ -694,6 +728,7 @@ internal sealed class SettingsForm : Form
         c.Dimmer.Hardware = _dimHw.Checked;
         c.Dimmer.HardwareLevel = (int)_dimHwLevel.Value;
         c.Dimmer.SoftwareLevel = (float)_dimSwLevel.Value / 100f;
+        c.Dimmer.Monitors = new Dictionary<string, string>(_monModes, StringComparer.OrdinalIgnoreCase);
 
         c.Network.Enabled = _netEnabled.Checked;
         var city = _city.Text.Trim();
@@ -1682,19 +1717,95 @@ internal sealed class SettingsForm : Form
     {
         if (IsDisposed) return;
         _probe.Enabled = true;
+        _monDdc.Clear();
+        foreach (var m in found) _monDdc[m.DeviceName] = m;
+        RefreshMonitorRows();
+        _probeStatus.ForeColor = Theme.Muted;
+        _probeStatus.Text = !ready ? "опрос не уложился в 10 с" : found.Count == 0 ? "мониторов не найдено" : $"мониторов: {found.Count} (яркость не менялась)";
+    }
+
+    /// <summary>Строки таблицы: модель (DISPLAYn), ответ DDC (после «проверить»), диапазон, режим. Выделение сохраняется.</summary>
+    private void RefreshMonitorRows()
+    {
+        if (_monIds.Count == 0)
+        {
+            try { _monIds = MonitorIdentities.Describe(Monitors.Enumerate()); }
+            catch (Exception e) { _log.Warn("настройки/мониторы: " + e.Message); }
+        }
+        int sel = _monitors.SelectedIndices.Count > 0 ? _monitors.SelectedIndices[0] : -1;
         _monitors.BeginUpdate();
         _monitors.Items.Clear();
-        foreach (var m in found)
+        foreach (var id in _monIds)
         {
-            var item = new ListViewItem(m.DeviceName);
-            item.SubItems.Add(m.Hardware ? "да" : "нет");
-            item.SubItems.Add($"{m.Min}–{m.Original}–{m.Max}");
-            item.SubItems.Add(m.Reason ?? (m.Hardware ? "" : "нет ответа DDC/CI"));
+            string dev = id.Device.Replace(@"\\.\", "");
+            var item = new ListViewItem($"{id.Model} ({dev})") { Tag = id };
+            if (_monDdc.TryGetValue(id.Device, out var m))
+            {
+                item.SubItems.Add(m.Hardware ? "да" : "нет");
+                item.SubItems.Add(m.Hardware ? $"{m.Min}–{m.Original}–{m.Max}" : "—");
+            }
+            else { item.SubItems.Add("?"); item.SubItems.Add("—"); }
+            string mode = _monModes.TryGetValue(id.Key, out var v) ? v : DimmerConfig.ModeAuto;
+            item.SubItems.Add(Array.Find(MonModeChoices, c => string.Equals(c.Value, mode, StringComparison.OrdinalIgnoreCase))?.Text ?? "авто");
             _monitors.Items.Add(item);
         }
         _monitors.EndUpdate();
+        if (_monitors.Items.Count > 0) _monitors.Items[sel >= 0 && sel < _monitors.Items.Count ? sel : 0].Selected = true;
+        ShowSelectedMonitorMode();
+    }
+
+    private MonitorIdentity? SelectedMonitor() =>
+        _monitors.SelectedItems.Count > 0 ? _monitors.SelectedItems[0].Tag as MonitorIdentity : null;
+
+    private bool _monModeSync;
+
+    private void ShowSelectedMonitorMode()
+    {
+        var id = SelectedMonitor();
+        _blink.Enabled = id is not null;   // выпадашку не выключаем: выключенная flat-ComboBox рисуется белой
+        if (id is null) return;
+        string mode = _monModes.TryGetValue(id.Key, out var v) ? v : DimmerConfig.ModeAuto;
+        _monModeSync = true;
+        _monMode.SelectedIndex = Math.Max(0, Array.FindIndex(MonModeChoices, c => string.Equals(c.Value, mode, StringComparison.OrdinalIgnoreCase)));
+        _monModeSync = false;
+    }
+
+    private void SetSelectedMonitorMode()
+    {
+        if (_monModeSync || SelectedMonitor() is not { } id || _monMode.SelectedItem is not Choice ch) return;
+        if (ch.Value == DimmerConfig.ModeAuto) _monModes.Remove(id.Key); else _monModes[id.Key] = ch.Value;
+        RefreshMonitorRows();
+    }
+
+    /// <summary>«Моргнуть» выбранным монитором: тот же журнал, что у заставки — при падении яркость вернётся при следующем запуске.</summary>
+    private void StartBlink()
+    {
+        if (SelectedMonitor() is not { } id) return;
+        _blink.Enabled = false;
         _probeStatus.ForeColor = Theme.Muted;
-        _probeStatus.Text = !ready ? "опрос не уложился в 10 с" : found.Count == 0 ? "мониторов не найдено" : $"мониторов: {found.Count} (яркость не менялась)";
+        _probeStatus.Text = $"моргаю: {id.Model}…";
+        var journal = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Phosphor", "backlight-journal.json");
+        Task.Run(() =>
+        {
+            string msg;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(journal)!);
+                using var bl = Backlight.Start(journal, m => _log.Info("настройки/моргнуть: " + m));
+                msg = bl.Blink(id.Device);
+            }
+            catch (Exception e)
+            {
+                msg = "не вышло: " + e.Message;
+                _log.Warn("настройки/моргнуть: " + e.Message);
+            }
+            if (IsDisposed || !IsHandleCreated) return;
+            BeginInvoke(() =>
+            {
+                _probeStatus.Text = $"{id.Model}: {msg}";
+                _blink.Enabled = SelectedMonitor() is not null;
+            });
+        });
     }
 
     private void SelectTab(string name)

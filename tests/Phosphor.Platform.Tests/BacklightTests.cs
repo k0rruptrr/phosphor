@@ -383,4 +383,42 @@ public class BacklightTests : IDisposable
                 : $"{d}: DDC не отвечает");
         }
     }
+
+    // «Моргнуть» (окно настроек)
+
+    [Fact]
+    public void Blink_DipsToMinimumThenRestoresOriginal()
+    {
+        var clock = new FakeClock();
+        var fake = OneMonitor(clock, cur: 70);
+        using var bl = Create(fake, clock);
+        // Пока «держим», ждём записи минимума реальным временем: запись идёт из фонового потока
+        string msg = bl.Blink(Dev, 0, ms => { if (ms > 0) Thread.Sleep(ms); else Assert.True(WaitUntil(() => LastValue(fake) == 0)); });
+        Assert.StartsWith("моргнул", msg);
+        Assert.Equal(new[] { 0, 70 }, fake.SetsSnapshot().Select(s => s.Value).ToArray());
+        Assert.Equal(70, fake.CurrentOf(Dev));
+        Assert.False(File.Exists(_journal));
+    }
+
+    [Fact]
+    public void Blink_AtMinimum_FlashesUpInstead()
+    {
+        var clock = new FakeClock();
+        var fake = OneMonitor(clock, cur: 10);
+        using var bl = Create(fake, clock);
+        bl.Blink(Dev, 0, ms => { if (ms > 0) Thread.Sleep(ms); else Assert.True(WaitUntil(() => LastValue(fake) == 100)); });
+        Assert.Equal(new[] { 100, 10 }, fake.SetsSnapshot().Select(s => s.Value).ToArray());
+    }
+
+    [Fact]
+    public void Blink_SilentMonitor_WritesNothing()
+    {
+        var clock = new FakeClock();
+        var fake = OneMonitor(clock);
+        fake.Mons[Dev].Responds = false;
+        using var bl = Create(fake, clock);
+        string msg = bl.Blink(Dev, 0, ms => Thread.Sleep(Math.Max(ms, 1)));
+        Assert.Contains("не отвечает", msg);
+        Assert.Empty(fake.SetsSnapshot());
+    }
 }
