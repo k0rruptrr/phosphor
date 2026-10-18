@@ -4,25 +4,48 @@ using Phosphor.Core;
 
 namespace Phosphor.Scenes;
 
+/// <summary>Часы: табло split-flap (Solari).</summary>
+public sealed class SplitFlapScene : ClocksScene { public SplitFlapScene() : base(0) { } public override string Id => "splitflap"; }
+
+/// <summary>Часы: ряд газоразрядных ламп ИН-14.</summary>
+public sealed class NixieScene : ClocksScene { public NixieScene() : base(1) { } public override string Id => "nixie"; }
+
+/// <summary>Часы: мировое время с картой терминатора.</summary>
+public sealed class WorldClockScene : ClocksScene { public WorldClockScene() : base(2) { } public override string Id => "worldclock"; }
+
+/// <summary>Часы: аналоговый циферблат на секстантах.</summary>
+public sealed class AnalogClockScene : ClocksScene { public AnalogClockScene() : base(3) { } public override string Id => "analogclock"; }
+
 /// <summary>
-/// «Часы»: четыре циферблата по кругу (раз в faceSec): табло split-flap (Solari), ряд газоразрядных ламп ИН-14
-/// с проволочными цифрами, мировые часы с картой терминатора и аналоговый циферблат на секстантах.
+/// Часы — четыре отдельные сцены (раньше одна «clocks» с циферблатами по кругу, и дирижёр уходил раньше, чем
+/// доходила очередь второго): табло split-flap (Solari), ряд газоразрядных ламп ИН-14 с проволочными цифрами,
+/// мировые часы с картой терминатора и аналоговый циферблат на секстантах.
 /// Время приходит снимком "clock", город первой строкой — из снимка "weather" (если есть).
 /// </summary>
-public sealed class ClocksScene : IScene, IDataScene, ISceneParams
+public abstract class ClocksScene : IScene, IDataScene, ISceneParams
 {
     // Параметры для окна настроек.
-    public static readonly SceneParamSpec FaceSecSpec = new("faceSec", SceneParamKind.Float, 45f, 20f, 180f, "смена циферблата, с");
-    public static readonly SceneParamSpec FaceSpec = new("face", SceneParamKind.Choice, 0f, 0f, 4f,
-        "циферблат: auto — по кругу, иначе фиксированный", new[] { "auto", "flap", "nixie", "world", "analog" });
     public static readonly SceneParamSpec SecondsSpec = new("seconds", SceneParamKind.Bool, 1f, 0f, 1f, "показывать секунды");
     public static readonly SceneParamSpec SweepSpec = new("sweep", SceneParamKind.Bool, 1f, 0f, 1f,
         "секундная стрелка: плавно (вкл) или шагом (выкл)");
-    private static readonly SceneParamSpec[] ParamList = { FaceSecSpec, FaceSpec, SecondsSpec, SweepSpec };
+    private static readonly SceneParamSpec[] DigitalParams = { SecondsSpec };
+    private static readonly SceneParamSpec[] AnalogParams = { SweepSpec };
 
-    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+    /// <summary>У цифровых циферблатов — секунды; у аналогового секундная стрелка всегда, параметр — её ход.</summary>
+    public IReadOnlyList<SceneParamSpec> Params => _face == 3 ? AnalogParams : DigitalParams;
 
-    public string Id => "clocks";
+    /// <summary>Циферблат по старому имени из clocks.face (тесты, миграция): flap, nixie, world, analog.</summary>
+    public static ClocksScene ForFace(string face) => face.ToLowerInvariant() switch
+    {
+        "nixie" => new NixieScene(),
+        "world" => new WorldClockScene(),
+        "analog" => new AnalogClockScene(),
+        _ => new SplitFlapScene(),
+    };
+
+    protected ClocksScene(int face) => _face = face;
+
+    public abstract string Id { get; }
 
     private static readonly string[] Keys = { "clock", "weather" };
     public IReadOnlyList<string> DataKeys => Keys;
@@ -118,8 +141,8 @@ public sealed class ClocksScene : IScene, IDataScene, ISceneParams
         public int Stage; // 0 — стоит, 1 — верх уже новый, низ падает (старый верх), 2 — низ новый
     }
 
-    private int _faceMode;               // 0 — auto, 1..4 — Faces[mode-1]
-    private float _faceSec, _cycleT, _sinceSnap, _runT = -1f;
+    private readonly int _face;          // индекс в Faces
+    private float _sinceSnap, _runT = -1f;
     private float _aspect = 1.8f;        // высота/ширина ячейки (SceneOptions.CellAspect)
     private bool _seconds, _sweep, _hasClock, _flapInit;
     private DateTime _clock, _utc;
@@ -140,14 +163,10 @@ public sealed class ClocksScene : IScene, IDataScene, ISceneParams
 
     public void Init(int cols, int rows, Random rng, SceneOptions options)
     {
-        _faceSec = Math.Clamp(options.GetFloat(FaceSecSpec.Name, FaceSecSpec.Default), FaceSecSpec.Min, FaceSecSpec.Max);
-        string face = options.GetString(FaceSpec.Name, FaceSpec.Options![(int)FaceSpec.Default]);
-        _faceMode = Math.Max(0, Array.FindIndex(FaceSpec.Options!, o => string.Equals(o, face, StringComparison.OrdinalIgnoreCase)));
         _seconds = options.GetBool(SecondsSpec.Name, SecondsSpec.Default > 0f);
         _sweep = options.GetBool(SweepSpec.Name, SweepSpec.Default > 0f);
         _aspect = Math.Clamp(options.CellAspect, 0.5f, 4f);
 
-        _cycleT = 0f;
         _sinceSnap = 0f;
         _runT = -1f;
         _lastRunKey = long.MinValue;
@@ -270,7 +289,6 @@ public sealed class ClocksScene : IScene, IDataScene, ISceneParams
     {
         if (!(dt > 0f)) return;
 
-        _cycleT = (_cycleT + dt) % (4f * _faceSec);
         _sinceSnap = Math.Min(_sinceSnap + dt, SnapMaxAge);
         if (_runT >= 0f)
         {
@@ -371,9 +389,7 @@ public sealed class ClocksScene : IScene, IDataScene, ISceneParams
 
     // ---- Вспомогательные функции ----
 
-    private int FaceIndex() => _faceMode > 0
-        ? _faceMode - 1
-        : _faceSec > 0f ? (int)(_cycleT / _faceSec) % Faces.Length : 0;
+    private int FaceIndex() => _face;
 
     private DateTime LocalNow() => _clock.AddSeconds(_sinceSnap);
 
@@ -575,6 +591,8 @@ public sealed class ClocksScene : IScene, IDataScene, ISceneParams
     {
         bits = 0;
         best = 0;
+        // На крошечной сетке лампы (слот не уже 8 ячеек) вылезают за край — там субпикселей нет
+        if ((uint)x >= (uint)(_subW / 2) || (uint)y >= (uint)(_subH / 3)) return;
         for (int dy = 0; dy < 3; dy++)
             for (int dx = 0; dx < 2; dx++)
             {

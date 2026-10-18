@@ -16,8 +16,10 @@ public sealed class ClocksSceneTests
 
     private static ClocksScene Make(int seed, SceneOptions? o = null, int cols = 120, int rows = 40)
     {
-        var s = new ClocksScene();
-        s.Init(cols, rows, new Random(seed), o ?? new SceneOptions());
+        // Старый параметр face выбирает сцену (циферблаты стали отдельными сценами)
+        o ??= new SceneOptions();
+        var s = ClocksScene.ForFace(o.GetString("face", "flap"));
+        s.Init(cols, rows, new Random(seed), o);
         return s;
     }
 
@@ -29,7 +31,13 @@ public sealed class ClocksSceneTests
     private static string Key(CharGrid g) => new string(g.Cells.Select(c => c.Ch).ToArray());
 
     [Fact]
-    public void Contract() => SceneContract.VerifyAll(() => new ClocksScene(), "clocks");
+    public void Contract()
+    {
+        SceneContract.VerifyAll(() => new SplitFlapScene(), "splitflap");
+        SceneContract.VerifyAll(() => new NixieScene(), "nixie");
+        SceneContract.VerifyAll(() => new WorldClockScene(), "worldclock");
+        SceneContract.VerifyAll(() => new AnalogClockScene(), "analogclock");
+    }
 
     [Fact]
     public void FlapShowsSnapshotTime()
@@ -158,6 +166,19 @@ public sealed class ClocksSceneTests
     }
 
     [Fact]
+    public void WorldSecondsToggleChangesRows()
+    {
+        CharGrid Shot(bool seconds)
+        {
+            var s = Make(7, Opts($"{{\"face\":\"world\",\"seconds\":{(seconds ? "true" : "false")}}}"));
+            Feed(s, T1405);
+            SceneContract.Run(s, 30);
+            return SceneContract.Snap(s, 120, 40);
+        }
+        Assert.NotEqual(Key(Shot(true)), Key(Shot(false)));
+    }
+
+    [Fact]
     public void TerminatorNoonUtcOnMeridianIsDay()
     {
         var noon = new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc);
@@ -199,21 +220,27 @@ public sealed class ClocksSceneTests
         Assert.True(Math.Abs(stepped) < 0.01f);
     }
 
-    [Fact]
-    public void FaceParamSelectsFace()
+    [Theory]
+    [InlineData("splitflap", "flap")]
+    [InlineData("nixie", "nixie")]
+    [InlineData("worldclock", "world")]
+    [InlineData("analogclock", "analog")]
+    public void EachSceneKeepsItsFace(string id, string face)
     {
-        Assert.Equal("world", Make(9, Opts("{\"face\":\"world\"}")).CurrentFace);
-        Assert.Equal("analog", Make(9, Opts("{\"face\":\"analog\"}")).CurrentFace);
-        Assert.Equal("flap", Make(9).CurrentFace);
+        var s = Make(9, Opts($"{{\"face\":\"{face}\"}}"));
+        Assert.Equal(id, s.Id);
+        Assert.Equal(face, s.CurrentFace);
+        SceneContract.Run(s, 200 * 60, 1f / 60f); // старый круг сменил бы циферблат через 45 с
+        Assert.Equal(face, s.CurrentFace);
     }
 
     [Fact]
-    public void AutoCyclesFacesEveryFaceSec()
+    public void SweepParamOnlyOnAnalog()
     {
-        var s = Make(10, Opts("{\"faceSec\":20}"));
-        Assert.Equal("flap", s.CurrentFace);
-        SceneContract.Run(s, 21 * 60, 1f / 60f);
-        Assert.Equal("nixie", s.CurrentFace);
+        Assert.Contains(new AnalogClockScene().Params, p => p.Name == "sweep");
+        Assert.DoesNotContain(new NixieScene().Params, p => p.Name == "sweep");
+        Assert.All(new ClocksScene[] { new SplitFlapScene(), new NixieScene(), new WorldClockScene(), new AnalogClockScene() },
+            s => Assert.DoesNotContain(s.Params, p => p.Name is "face" or "faceSec"));
     }
 
     [Fact]

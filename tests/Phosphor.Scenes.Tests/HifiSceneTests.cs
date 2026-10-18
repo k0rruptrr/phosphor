@@ -18,7 +18,12 @@ public sealed class HifiSceneTests
     public HifiSceneTests(ITestOutputHelper output) => _out = output;
 
     [Fact]
-    public void Contract() => SceneContract.VerifyAll(() => new HifiScene(), "hifi");
+    public void Contract()
+    {
+        SceneContract.VerifyAll(() => new SpectrumScene(), "spectrum");
+        SceneContract.VerifyAll(() => new VuMeterScene(), "vumeter");
+        SceneContract.VerifyAll(() => new MediaPlayerScene(), "mediaplayer");
+    }
 
     [Fact]
     public void SpectrumBarHeightFollowsBandValue()
@@ -89,12 +94,15 @@ public sealed class HifiSceneTests
     }
 
     [Fact]
-    public void AutoCyclesToNextFaceAfterFaceSec()
+    public void FaceStaysPut()
     {
-        var s = Make("{\"faceSec\":20}");
-        Step(s, 20 * 60 + 60); // 21 с: переход 0.6 с уже прошёл
+        var s = Make("{\"face\":\"spectrum\"}");
+        Step(s, 200 * 60); // старый круг сменил бы лицо через 40 с
         var g = SceneContract.Snap(s, Cols, Rows);
-        Assert.Contains("VU METERS", RowText(g, 0));
+        Assert.Contains("SPECTRUM ANALYZER", RowText(g, 0));
+        Assert.Empty(new VuMeterScene().Params);
+        Assert.Empty(new MediaPlayerScene().Params);
+        Assert.Contains(new SpectrumScene().Params, p => p.Name == "peakHold");
     }
 
     [Fact]
@@ -154,8 +162,12 @@ public sealed class HifiSceneTests
 
     private static SceneOptions Opts(string json) => new() { Params = JsonDocument.Parse(json).RootElement };
 
-    private static IScene Make(string json, int cols = Cols, int rows = Rows) =>
-        SceneContract.Make(() => new HifiScene(), cols, rows, 7, Opts(json));
+    // Старый параметр face выбирает сцену (лица стали отдельными сценами)
+    private static IScene Make(string json, int cols = Cols, int rows = Rows)
+    {
+        var o = Opts(json);
+        return SceneContract.Make(() => HifiScene.ForFace(o.GetString("face", "spectrum")), cols, rows, 7, o);
+    }
 
     /// <summary>Кадр звука: OnAudio, затем Update. bands = null — без спектра.</summary>
     private static void Step(IScene s, int frames, float[]? bands = null, float level = 0f, float bpm = 0f)

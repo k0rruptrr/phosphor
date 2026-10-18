@@ -26,9 +26,8 @@ public sealed class SceneParamsTests
         ["C64LoadScene.titleSeconds"] = new(Frames: 2400, Reason: "титульник после загрузки; 40 с симуляции"),
         ["C64LoadScene.loadMin"] = new(Frames: 2400, Reason: "конец загрузки зависит от loadMin; 40 с симуляции"),
         ["PlasmaScene.paletteInterval"] = new(Frames: 600, Reason: "смена палитры раз в paletteInterval; 10 с симуляции"),
-        ["HifiScene.faceSec"] = new(Frames: 1500, Reason: "смена лица по таймеру faceSec; 25 с симуляции"),
-        ["ClocksScene.faceSec"] = new(Frames: 1500, Reason: "смена циферблата по таймеру faceSec; 25 с симуляции"),
-        ["ClocksScene.sweep"] = new(Skip: true, Reason: "проверяется подставными часами: SweepChangesSecondHandMotion"),
+        ["AnalogClockScene.sweep"] = new(Skip: true, Reason: "проверяется подставными часами: SweepChangesSecondHandMotion"),
+        ["WorldClockScene.seconds"] = new(Skip: true, Reason: "без снимка времени секунд нет; проверяется WorldSecondsToggleChangesRows"),
         // density=0 — пустой экран по определению (существующие тесты MatrixSceneTests на это опираются).
         ["MatrixScene.density"] = new(EmptyAtMinOk: true, Reason: "Min=0 — дождь выключен, экран пуст"),
         // Удары: без ударов звука сцена не реагирует, поэтому подаём удары.
@@ -352,7 +351,9 @@ public sealed class SceneParamsTests
         .Where(t => t is { IsClass: true, IsAbstract: false }
                     && typeof(IScene).IsAssignableFrom(t)
                     && typeof(ISceneParams).IsAssignableFrom(t)
-                    && t.GetConstructor(Type.EmptyTypes) != null)
+                    && t.GetConstructor(Type.EmptyTypes) != null
+                    // Сцена-наследник может не иметь своих параметров (vumeter, mediaplayer)
+                    && ((ISceneParams)Activator.CreateInstance(t)!).Params.Count > 0)
         .OrderBy(t => t.FullName, StringComparer.Ordinal);
 
     private static IReadOnlyList<SceneParamSpec> Specs(Type t) => ((ISceneParams)NewScene(t)).Params;

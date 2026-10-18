@@ -3,15 +3,23 @@ using Phosphor.Core;
 
 namespace Phosphor.Scenes;
 
+/// <summary>Стойка Hi-Fi: анализатор спектра на деке (spectrum).</summary>
+public sealed class SpectrumScene : HifiScene { public SpectrumScene() : base(0) { } public override string Id => "spectrum"; }
+
+/// <summary>Стойка Hi-Fi: стрелочные VU-метры (vumeter).</summary>
+public sealed class VuMeterScene : HifiScene { public VuMeterScene() : base(1) { } public override string Id => "vumeter"; }
+
+/// <summary>Стойка Hi-Fi: плеер в духе Winamp (mediaplayer).</summary>
+public sealed class MediaPlayerScene : HifiScene { public MediaPlayerScene() : base(2) { } public override string Id => "mediaplayer"; }
+
 /// <summary>
-/// Стойка Hi-Fi 80–90-х. По кругу три «лица»: анализатор спектра на деке, стрелочные VU-метры и плеер «Winamp».
-/// Смена лица — шторка с глитчем. Без звука: анализатор едва шумит, стрелки на −20, плеер «STOPPED»;
-/// через 10 с тишины — слабое демо, чтобы сцена не была мёртвой.
+/// Стойка Hi-Fi 80–90-х, три отдельные сцены (раньше — одна «hifi» с лицами по кругу, и дирижёр уходил
+/// раньше, чем доходила очередь второго лица): анализатор спектра, стрелочные VU-метры, плеер.
+/// Без звука: анализатор едва шумит, стрелки на −20, плеер «STOPPED»; через 10 с тишины — слабое демо.
 /// </summary>
-public sealed class HifiScene : IScene, IAudioReactive, ISceneParams
+public abstract class HifiScene : IScene, IAudioReactive, ISceneParams
 {
     private const int Bands = AudioFrame.BandCount;
-    private const int FaceCount = 3;
     private const int EqSliders = 10;
     private const int MiniCols = 16;
     private const float DemoAfterSec = 10f;
@@ -56,22 +64,30 @@ public sealed class HifiScene : IScene, IAudioReactive, ISceneParams
     private static readonly float[] VuLabelDb = { -20f, -10f, -5f, 0f, 3f };
     private static readonly string[] VuLabel = { "-20", "-10", "-5", "0", "+3" };
 
-    public string Id => "hifi";
+    public abstract string Id { get; }
 
     // Параметры для окна настроек. Default — то же значение, что читает Init.
-    public static readonly SceneParamSpec FaceSec = new("faceSec", SceneParamKind.Float, 40f, 20f, 120f, "секунд на одно лицо (при face=auto)");
-    public static readonly SceneParamSpec Face = new("face", SceneParamKind.Choice, 0f, 0f, 3f, "лицо: auto — по кругу, или одно", new[] { "auto", "spectrum", "vu", "player" });
     public static readonly SceneParamSpec PeakHold = new("peakHold", SceneParamKind.Float, 1f, 0.2f, 3f, "сек, сколько держится пик над столбиком");
-    private static readonly SceneParamSpec[] ParamList = { FaceSec, Face, PeakHold };
+    private static readonly SceneParamSpec[] PeakParams = { PeakHold };
 
-    public IReadOnlyList<SceneParamSpec> Params => ParamList;
+    /// <summary>Пик над столбиками рисует только анализатор; у VU-метров и плеера параметров нет.</summary>
+    public IReadOnlyList<SceneParamSpec> Params => _face == 0 ? PeakParams : Array.Empty<SceneParamSpec>();
+
+    /// <summary>Лицо по старому имени из hifi.face (тесты, миграция): spectrum, vu, player.</summary>
+    public static HifiScene ForFace(string face) => face.ToLowerInvariant() switch
+    {
+        "vu" => new VuMeterScene(),
+        "player" => new MediaPlayerScene(),
+        _ => new SpectrumScene(),
+    };
+
+    protected HifiScene(int face) => _face = face;
 
     // Настройки и время.
     private int _cols = 1, _rows = 1;
-    private float _speed = 1f, _faceSec = 40f, _peakHoldSec = 1f;
-    private bool _autoFace = true;
-    private float _time, _faceTimer, _transLeft, _marq;
-    private int _face, _fromFace;
+    private float _speed = 1f, _peakHoldSec = 1f;
+    private float _time, _marq;
+    private readonly int _face;
     private float _phase1, _phase2;
 
     // Звук (копия последнего кадра).
@@ -110,18 +126,11 @@ public sealed class HifiScene : IScene, IAudioReactive, ISceneParams
         _cols = Math.Max(1, cols);
         _rows = Math.Max(1, rows);
         _speed = MathF.Max(0f, options.Speed);
-        _faceSec = Math.Clamp(options.GetFloat(FaceSec.Name, FaceSec.Default), FaceSec.Min, FaceSec.Max);
         _peakHoldSec = Math.Clamp(options.GetFloat(PeakHold.Name, PeakHold.Default), PeakHold.Min, PeakHold.Max);
-        int mode = ChoiceIndex(options, Face);
-        _autoFace = mode == 0;
-        _face = _autoFace ? 0 : mode - 1;
-        _fromFace = _face;
         _phase1 = (float)rng.NextDouble() * 10f;
         _phase2 = (float)rng.NextDouble() * 10f;
 
         _time = 0f;
-        _faceTimer = 0f;
-        _transLeft = 0f;
         _marq = 0f;
         Array.Clear(_in);
         Array.Clear(_spec);
@@ -138,8 +147,6 @@ public sealed class HifiScene : IScene, IAudioReactive, ISceneParams
         _text = "STOPPED";
         _clock = "00:00";
         _status = "STOPPED";
-        _gOld = new CharGrid(_cols, _rows);
-        _gNew = new CharGrid(_cols, _rows);
         _aspect = Math.Clamp(options.CellAspect, 0.5f, 4f);
         _inkMask = new int[_cols * _rows];
         _redMask = new int[_cols * _rows];
@@ -178,49 +185,10 @@ public sealed class HifiScene : IScene, IAudioReactive, ISceneParams
         _beatNow = false;
         _lampLeft = MathF.Max(0f, _lampLeft - d);
 
-        if (_autoFace)
-        {
-            _faceTimer += d;
-            if (_faceTimer >= _faceSec)
-            {
-                _faceTimer = 0f;
-                _fromFace = _face;
-                _face = (_face + 1) % FaceCount;
-                _transLeft = TransitionSec;
-            }
-        }
-        if (_transLeft > 0f) _transLeft = MathF.Max(0f, _transLeft - d);
-
         RebuildText();
     }
 
-    public void Draw(CharGrid grid)
-    {
-        int cols = grid.Cols;
-        if (_transLeft <= 0f || _gOld.Cols != cols || _gOld.Rows != grid.Rows)
-        {
-            DrawFace(_face, grid);
-            return;
-        }
-
-        // Шторка: слева направо, у края — глитч (короткие строки съезжают на 3 клетки).
-        DrawFace(_fromFace, _gOld);
-        DrawFace(_face, _gNew);
-        float p = 1f - _transLeft / TransitionSec;
-        int edge = (int)MathF.Round(p * cols);
-        int tick = (int)(_time * 60f);
-        for (int y = 0; y < grid.Rows; y++)
-        {
-            for (int x = 0; x < cols; x++)
-            {
-                var src = x < edge ? _gNew : _gOld;
-                int sx = x;
-                if (MathF.Abs(x - edge) < 8 && (y * 7 + tick) % 9 == 0)
-                    sx = Math.Clamp(x + ((y & 1) == 0 ? 3 : -3), 0, cols - 1);
-                grid.Cells[y * cols + x] = src.Cells[y * cols + sx];
-            }
-        }
-    }
+    public void Draw(CharGrid grid) => DrawFace(_face, grid);
 
     // ---------- состояние ----------
 
@@ -311,13 +279,6 @@ public sealed class HifiScene : IScene, IAudioReactive, ISceneParams
             _text = $"PHOSPHOR - {bpmText} BPM - {_clock}   ";
             _status = "PLAYING";
         }
-    }
-
-    private static int ChoiceIndex(SceneOptions o, SceneParamSpec p)
-    {
-        string s = o.GetString(p.Name, p.Options![(int)p.Default]);
-        int i = Array.FindIndex(p.Options!, x => string.Equals(x, s, StringComparison.OrdinalIgnoreCase));
-        return i < 0 ? (int)p.Default : i;
     }
 
     // ---------- отрисовка ----------

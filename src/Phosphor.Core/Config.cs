@@ -104,6 +104,76 @@ public sealed class PhosphorConfig
         return changed;
     }
 
+    /// <summary>Сцены, разделённые на отдельные (0.12): старый id → новые id и имена циферблатов из старого параметра face.</summary>
+    public static readonly (string Old, string[] New, string[] Faces)[] SplitScenes =
+    {
+        ("clocks", new[] { "splitflap", "nixie", "worldclock", "analogclock" }, new[] { "flap", "nixie", "world", "analog" }),
+        ("hifi", new[] { "spectrum", "vumeter", "mediaplayer" }, new[] { "spectrum", "vu", "player" }),
+    };
+
+    /// <summary>
+    /// Старые составные сцены (clocks, hifi) → отдельные. Включённая старая — включаются все новые, а если в её параметрах
+    /// был зафиксирован face — только эта. Выключенная — новые попадают в Seen, чтобы MigrateScenes не включила их сама.
+    /// Любимые и параметры переезжают (кроме face/faceSec). Идемпотентно; вызывать до MigrateScenes. true — конфиг изменился.
+    /// </summary>
+    public bool MigrateSplitScenes(List<string> notes)
+    {
+        bool changed = false;
+        var cmp = StringComparer.OrdinalIgnoreCase;
+        JsonObject? pars = Scenes.Params.ValueKind == JsonValueKind.Object ? JsonNode.Parse(Scenes.Params.GetRawText()) as JsonObject : null;
+        bool parsChanged = false;
+        foreach (var (old, news, faces) in SplitScenes)
+        {
+            JsonObject? oldPars = null;
+            string? parsKey = pars?.Select(kv => kv.Key).FirstOrDefault(k => cmp.Equals(k, old));
+            if (parsKey is not null) oldPars = pars![parsKey] as JsonObject;
+            bool wasEnabled = Scenes.Enabled.Contains(old, cmp);
+            bool present = wasEnabled || (Scenes.Seen?.Contains(old, cmp) ?? false) || Scenes.Favorites.Contains(old, cmp) || parsKey is not null;
+            if (!present) continue;
+            changed = true;
+
+            // Зафиксированный циферблат: только он
+            string[] targets = news;
+            if (oldPars?["face"] is JsonValue fv && fv.TryGetValue<string>(out var face))
+            {
+                int i = Array.FindIndex(faces, f => cmp.Equals(f, face));
+                if (i >= 0) targets = new[] { news[i] };
+            }
+
+            Scenes.Seen ??= new List<string>(Scenes.Enabled);
+            Scenes.Seen.RemoveAll(s => cmp.Equals(s, old));
+            foreach (var n in news) if (!Scenes.Seen.Contains(n, cmp)) Scenes.Seen.Add(n);
+
+            if (wasEnabled)
+            {
+                int at = Scenes.Enabled.FindIndex(s => cmp.Equals(s, old));
+                Scenes.Enabled.RemoveAll(s => cmp.Equals(s, old));
+                foreach (var n in targets.Reverse()) if (!Scenes.Enabled.Contains(n, cmp)) Scenes.Enabled.Insert(Math.Min(at, Scenes.Enabled.Count), n);
+            }
+            if (Scenes.Favorites.RemoveAll(s => cmp.Equals(s, old)) > 0)
+                foreach (var n in targets) if (!Scenes.Favorites.Contains(n, cmp)) Scenes.Favorites.Add(n);
+
+            if (parsKey is not null)
+            {
+                pars!.Remove(parsKey);
+                parsChanged = true;
+                if (oldPars is not null)
+                    foreach (var n in news)
+                    {
+                        if (pars.Any(kv => cmp.Equals(kv.Key, n))) continue;
+                        var copy = new JsonObject();
+                        foreach (var (k, v) in oldPars)
+                            if (!cmp.Equals(k, "face") && !cmp.Equals(k, "faceSec")) copy[k] = v?.DeepClone();
+                        if (copy.Count > 0) pars[n] = copy;
+                    }
+            }
+            notes.Add($"сцена '{old}' разделена на {string.Join(", ", news)}" +
+                      (wasEnabled ? $"; включены: {string.Join(", ", targets)}" : "; была выключена — новые тоже выключены"));
+        }
+        if (parsChanged) Scenes.Params = JsonDocument.Parse(pars!.ToJsonString()).RootElement.Clone();
+        return changed;
+    }
+
     /// <summary>
     /// Убрать из стадий crt всех пресетов ключи curvature, cornerRadius, vignette, mask (и такие же ключи внутри "mod"):
     /// геометрию кинескопа и маску теперь задаёт экран (screen). Идемпотентно. true — что-то удалено (конфиг стоит сохранить);
@@ -246,7 +316,7 @@ public sealed class PhosphorConfig
       "scenes": {
         "enabled": ["matrix", "starfield", "pipes", "doomfire", "life", "dvd", "aquarium",
                     "teletext", "teletype", "weatherboard", "torus", "grayscott", "voxel", "boids",
-                    "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv", "scope", "bbs", "radar", "fires", "hifi", "clocks", "drone"],
+                    "plasma", "rotozoom", "tunnel", "cracktro", "boing", "c64load", "mandelbrot", "satellite", "organism", "sattv", "scope", "bbs", "radar", "fires", "spectrum", "vumeter", "mediaplayer", "splitflap", "nixie", "worldclock", "analogclock", "drone"],
         "speed": 1.0,
         "palette": "default",
         "params": {
