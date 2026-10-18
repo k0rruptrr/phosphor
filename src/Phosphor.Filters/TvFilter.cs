@@ -15,7 +15,7 @@ public sealed class TvFilter : ShaderFilter
     private static readonly IReadOnlyList<ParamSpec> _params = new ParamSpec[]
     {
         new ParamSpec("mode", 0f, 0f, 2f, new[] { "pal", "secam", "ntsc" }, "Система цветности", "система цвета"),
-        new ParamSpec("amount", 1f, 0f, 1f, null, "Общая сила артефактов, 0 = почти без изменений", "сила эффекта"),
+        new ParamSpec("amount", 1f, 0f, 2f, null, "Сила артефактов — множитель: 0 = почти без изменений, 1 = как задумано, 2 = утрировано", "сила эффекта"),
         new ParamSpec("hue", 0f, -30f, 30f, null, "Оттенок в градусах (ручка Tint для NTSC)", "оттенок"),
         new ParamSpec("sharpness", 0.3f, 0f, 3f, null, "Звон и перерегулирование яркости на краях", "резкость"),
         new ParamSpec("saturation", 0.6f, 0f, 1.5f, null, "SECAM: насыщенность декодированного цвета (пастель)", "насыщенность"),

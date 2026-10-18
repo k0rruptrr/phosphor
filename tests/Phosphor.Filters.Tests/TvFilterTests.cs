@@ -1174,4 +1174,39 @@ public class TvFilterTests
         }
         return float.NaN;
     }
+
+    // ---------- Сила — множитель артефактов (#235) ----------
+
+    [Fact]
+    public void Secam_AmountIsAMultiplier_TwoIsStrongerThanOne_ZeroIsCalm()
+    {
+        using var gpu = new GpuHarness(W, H);
+        FillBars(gpu);
+        using var f = gpu.Create<TvFilter>();
+        Dictionary<string, float> P(float a) => new()
+        {
+            ["mode"] = ModeSecam, ["amount"] = a, ["fires"] = 1f, ["interference"] = 1f, ["fibers"] = 1f, ["edge"] = 0f, ["bottles"] = 0f, ["ghost"] = 0f,
+        };
+        double Mae(float[,,] a, float[,,] b)
+        {
+            double s = 0;
+            for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) for (int c = 0; c < 3; c++) s += Math.Abs(a[y, x, c] - b[y, x, c]);
+            return s / (W * H * 3);
+        }
+        // Кадр к кадру: снег и волокна меняются, их размах растёт с силой (факелы насыщаются — рост меньше линейного)
+        double flicker0 = Mae(gpu.Run(f, 3, P(0f)), gpu.Run(f, 4, P(0f)));
+        double flicker1 = Mae(gpu.Run(f, 3, P(1f)), gpu.Run(f, 4, P(1f)));
+        double flicker2 = Mae(gpu.Run(f, 3, P(2f)), gpu.Run(f, 4, P(2f)));
+        Assert.True(flicker0 < 0.002, $"при силе 0 кадр дрожит: {flicker0:F4}");
+        Assert.True(flicker2 > 1.2 * flicker1, $"сила 2 не сильнее 1: {flicker2:F4} против {flicker1:F4}");
+    }
+
+    [Fact]
+    public void Amount_RangeIsZeroToTwo()
+    {
+        var a = new TvFilter().Params.Single(p => p.Name == "amount");
+        Assert.Equal(0f, a.Min);
+        Assert.Equal(2f, a.Max);
+        Assert.Equal(1f, a.Default);
+    }
 }

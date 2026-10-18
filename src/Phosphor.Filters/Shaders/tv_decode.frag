@@ -1,6 +1,6 @@
 #version 330 core
 
-// Проход 2: декодирование сигнала (tv_encode.frag) как в телевизоре, смешивание с исходником по amount.
+// Проход 2: декодирование сигнала (tv_encode.frag) как в телевизоре. Сила (amount 0..2) — множитель артефактов.
 // NTSC и PAL: гребенчатый фильтр (яркость = сумма строк с противоположной фазой, цветность = разность).
 // SECAM: модель по исходнику (uSrc), композит не используется: яркость с лёгким ФНЧ, цвет с асимметричным
 // ФНЧ по горизонтали и огрублением через строку, факелы и снег приёма по хешу.
@@ -27,6 +27,10 @@ uniform float p_bottles;      // SECAM: сигналы опознавания (�
 uniform float p_ghost;        // двоение (эфир): отражённая копия правее контуров
 uniform float p_ghostDelay;   // задержка отражения, доля ширины кадра
 uniform float p_fibers;       // SECAM: сила «волокон» — строчного шума (1 = как на кассете)
+
+// Сила (amount, 0..2) — множитель артефактов внутри модели, а не прозрачность поверх исходника (#235).
+// Значения ниже — уже умноженные на силу; задаются в начале main.
+float gFires, gInter, gFibers, gEdge, gBottles, gTail;
 
 const float PI = 3.1415927;
 const float TAU = 6.2831853;
@@ -147,7 +151,7 @@ float secamLuma(float px, int row) {
 // Левый (длинный) хвост даёт растекание цвета ВПРАВО от источника.
 vec2 chromaRow(float px, int ry) {
     float s = uResolution.x / 1280.0;
-    int tail = int(SECAM_CHROMA_TAIL * s + 0.5);
+    int tail = int(SECAM_CHROMA_TAIL * s * gTail + 0.5);   // сила: хвост цвета короче при малой, длиннее при 2
     int near = int(SECAM_CHROMA_NEAR * s + 0.5);
     vec2 acc = vec2(0.0);
     float ws = 0.0;
@@ -203,10 +207,10 @@ vec2 flares(float px, int L) {
         // (1) контур: 0.05·fires·smoothstep(e), знак + (Dr → Cr+, Db → Cb+), Db ×1/3, длина ×fireSize;
         // (2) помехи приёма: interference²·0.9, знак +, Db ×1/3, длина ×fireSize (как до T4);
         // (3) тёмный: (y0 < 0.25) ? 0.003·fires : 0, канал по строке, случайный знак, без ×1/3, длина ×3·fireSize.
-        float pC = 0.05 * p_fires * smoothstep(0.08, 0.3, e) * mul;
+        float pC = 0.05 * gFires * smoothstep(0.08, 0.3, e) * mul;
         // Шум слабого сигнала: под ползунком «факелы» (0 — нет), квадрат — лёгкая просадка приёма почти не сыплет
-        float pS = p_interference * p_interference * 0.9 * p_fires * mul;
-        float pD = (y0 < 0.25 ? 0.003 * p_fires : 0.0);
+        float pS = gInter * gInter * 0.9 * gFires * mul;
+        float pD = (y0 < 0.25 ? 0.003 * gFires : 0.0);
         float r = rnd(h);
         if (r < pC + pS + pD) {
             bool dark = r >= pC + pS;
@@ -262,6 +266,9 @@ vec3 echoAt(float xp, float v) {
 }
 
 void main() {
+    float A = max(p_amount, 0.0);
+    gFires = p_fires * A; gInter = p_interference * A; gFibers = p_fibers * A;
+    gEdge = p_edge * A; gBottles = p_bottles * A; gTail = clamp(0.25 + 0.75 * A, 0.25, 2.0);
     float W = uResolution.x;
     float x = vUv.x * W;
     int row = int(floor(vUv.y * uResolution.y));
@@ -276,7 +283,7 @@ void main() {
         float y1 = combY(x, row, 2);
         float y2 = lumaLP(x, row, P / 1.25);
         float y = y1 + p_sharpness * (y1 - y2);
-        float drift = NTSC_DRIFT * p_amount * smoothNoise(uTime * 0.2);
+        float drift = NTSC_DRIFT * A * smoothNoise(uTime * 0.2);
         float shift = PI * float((row + uFrame) & 1) + p_hue * PI / 180.0 + drift;
         float i = demod(x, row, cyc, shift, SIG_NARROW * sg, false, 2);
         float q = demod(x, row, cyc, shift, SIG_WIDE * sg, true, 2);
@@ -295,7 +302,7 @@ void main() {
         for (int k = 0; k < 3; k++) {
             int rk = max(row - k, 0);
             float sv = ((rk & 1) == 0) ? 1.0 : -1.0;
-            float shift = float(rk) * PI * 0.5 + PAL_ERR;
+            float shift = float(rk) * PI * 0.5 + PAL_ERR * A;
             float a = demod(x, rk, cyc, shift, SIG_NARROW * sg, true, 0);
             float b = demod(x, rk, cyc, shift, SIG_WIDE * sg, false, 0);
             float wk = (k == 1) ? 0.5 : 0.25;
@@ -312,7 +319,7 @@ void main() {
         int L = row / 2;
         float y = secamLuma(px, row);
         float snow = rnd(ihash(uint(px) * 0x27D4EB2Du ^ uint(row) * 0x165667B1u ^ uint(uFrame) * 0x9E3779B9u)) - 0.5;
-        y += p_interference * 0.15 * snow;
+        y += gInter * 0.15 * snow;
         // Строчный шум («волокна»): вдоль строки ~200 px, независим между строками; на тёмном поле ещё и цветной.
         float fib = smoothNoise(px / 200.0 + rowPh(row));
         float fib2 = smoothNoise(px / 200.0 + rowPh(row) + 50.0);
@@ -321,27 +328,27 @@ void main() {
         vec3 sc = srcRgb(px, row);
         float tot = max(sc.r + sc.g + sc.b, 0.05);
         float kf = 1.0 + 0.6 * sc.g / tot - 0.4 * sc.b / tot;
-        y += p_fibers * kf * (0.025 * fib + dk * 0.02 * fib2);
+        y += gFibers * kf * (0.025 * fib + dk * 0.02 * fib2);
         // Редкие выпадения перезаписи: в среднем 1.5 на кадр при fibers = 1, белые чёрточки 8–30 px.
         // Вероятность пропорциональна fibers: при 0 выпадений нет, при 2 — вдвое чаще.
         uint dh = ihash(uint(row) * 0x85EBCA6Bu ^ uint(uFrame) * 0xC2B2AE35u ^ 0x3B9AC9u);
-        if (rnd(dh) < 1.5 / uResolution.y * p_fibers) {
+        if (rnd(dh) < 1.5 / uResolution.y * gFibers) {
             float dx0 = rnd(ihash(dh ^ 0x68E31DA4u)) * W;
             float dlen = 8.0 + 22.0 * rnd(ihash(dh ^ 0xB5297A4Du));
             if (px >= dx0 && px < dx0 + dlen) y += 0.6;
         }
         vec2 cc = secamChroma(px, row) * p_saturation;
-        cc *= 1.0 - 0.35 * smoothstep(0.6, 1.0, y);
+        cc *= 1.0 - 0.35 * min(A, 1.5) * smoothstep(0.6, 1.0, y);
         // тёмное поле: зеленоватый сдвиг цветности; его модуляция шумом — под fibers (при 0 — ровно, как «гладко»)
-        cc += dk * 0.03 * vec2(-0.6, -1.0) * (0.5 + 0.5 * fib2 * p_fibers);
-        if (p_fires > 0.0) cc += flares(px, L);
+        cc += A * dk * 0.03 * vec2(-0.6, -1.0) * (0.5 + 0.5 * fib2 * gFibers);
+        if (gFires > 0.0) cc += flares(px, L);
         // Обратное преобразование Y, Cb, Cr в RGB (Cb = 0.564(B-Y), Cr = 0.713(R-Y)).
         col = vec3(y + 1.402 * cc.y,
                    y - 0.344 * cc.x - 0.714 * cc.y,
                    y + 1.772 * cc.x);
         // Тёмное поле: зеленоватый подъём чёрного. Хвост цвета за ярким текстом: зелёно-жёлтый мазок вправо, затухает
         // (только там, где справа темнее, чем слева; на ровном поле нуля нет).
-        col += dk * vec3(0.015, 0.045, 0.025);
+        col += A * dk * vec3(0.015, 0.045, 0.025);
         float l0 = lum(srcRgb(px, row));
         float sm = 0.0;
         float sw = 0.0;
@@ -353,22 +360,22 @@ void main() {
         }
         // Хвост = сдвиг цветности в противоположную сторону от фона (на чёрном — зеленоватый базовый сдвиг).
         // Хвост относится к семейству факелов: включён тем же условием (fires/interference).
-        if (p_fires > 0.0 || p_interference > 0.0) {
+        if (gFires > 0.0 || gInter > 0.0) {
             // Цветность фона, повёрнутая по оттенку на −120° (cos = −0.5, sin = −0.866), плюс небольшой зелёный базис.
             vec2 rc = vec2(-0.5 * cc.x + 0.8660254 * cc.y, -0.8660254 * cc.x - 0.5 * cc.y);
             vec2 tail = 0.5 * (sm / sw) * (rc + vec2(-0.05, -0.08));
             col += vec3(1.402 * tail.y, -0.344 * tail.x - 0.714 * tail.y, 1.772 * tail.x);
         }
-        // Края гашения (управляет p_edge; gate = clamp(2·edge, 0, 1), так что edge = 0 — выкл).
+        // Края гашения (управляет gEdge; gate = clamp(2·edge, 0, 1), так что edge = 0 — выкл).
         // Левая палка: светлая линия ~1.5% ширины, ядро 0.25% ширины, рваная (сдвиг строки ±3 px, быстро по времени),
         // блоки по 6 строк пропадают, блоки по 8 строк — ярче (0.9). Правая кромка: последние 1% ширины тёмная, рваная ±2 px,
         // в ней короткие цветные чёрточки 0.15–0.35 (синие, зелёные, пурпурные).
-        float gEdge = clamp(p_edge * 2.0, 0.0, 1.0);
+        float gEdge = clamp(gEdge * 2.0, 0.0, 1.0);
         uint tk = uint(uFrame);
         float jitL = 3.0 * smoothNoise(float(row) * 0.7 + uTime * 4.0);
         float dLft = abs(px + 0.5 - (0.015 * W + jitL));
         // Gate насыщен при edge ≥ 0.5, поэтому при edge > 1 (новый Max 3) палка шире: ×1.5 при 2, ×2 при 3. До 1 — как было.
-        float ew = 1.0 + 0.5 * max(p_edge - 1.0, 0.0);
+        float ew = 1.0 + 0.5 * max(gEdge - 1.0, 0.0);
         float hw = 0.00125 * W * ew;
         float prof = 1.0 - smoothstep(hw - 0.4, hw + 2.6, dLft);
         float gapOn = step(0.12, rnd(ihash(uint(row / 6) * 0x9E3779B9u ^ tk * 0x85EBCA6Bu ^ 0x7A3D1Fu)));
@@ -385,7 +392,7 @@ void main() {
         vec3 dc = cr3 < 0.33 ? vec3(0.2, 0.45, 1.0) : (cr3 < 0.66 ? vec3(0.2, 1.0, 0.3) : vec3(0.9, 0.2, 0.9));
         col += gEdge * dashOn * inD * (0.15 + 0.2 * rnd(ihash(rh ^ 0x1B873593u))) * dc;
         col = mix(col, vec3(0.01, 0.015, 0.01), gEdge * smoothstep(edgeR - 0.5, edgeR + 0.5, x));
-        // Сигналы опознавания (бутылки) сверху кадра (управляет p_bottles): полоса высотой 2.8% кадра, 3–5 бутылок по ширине.
+        // Сигналы опознавания (бутылки) сверху кадра (управляет gBottles): полоса высотой 2.8% кадра, 3–5 бутылок по ширине.
         // Строка дрожит по x (строчная синхронизация), яркость строки ×(0.85..1.15). Нижний край размыт на 3.5 px (на 1080),
         // полоса дышит с периодом ~7 с и дрожит по высоте на 1–2 px. Строки чередуются: Db и Dr с малым контрастом.
         float yTop = (1.0 - vUv.y) * uResolution.y;
@@ -397,17 +404,19 @@ void main() {
         float ht = bandH * bp.y;
         float bandMask = 1.0 - smoothstep(ht - 3.5 * sy * bp.y, ht, yTop);
         float breath = 1.0 + 0.2 * sin(TAU * uTime / 7.0);
-        float bandAmt = p_bottles * 0.6 * breath * rowB * bp.x * bandMask;
+        float bandAmt = gBottles * 0.6 * breath * rowB * bp.x * bandMask;
         bool bandDb = (row & 1) == 0;
         col += bandAmt * (bandDb ? vec3(0.0875, 1.0, 0.2625) : vec3(0.2625, 1.0, 0.0875));
     }
 
     col = max(col, vec3(0.0));
     vec3 src = texture(uSrc, vUv).rgb;
-    vec3 outc = mix(src, col, p_amount);
+    // PAL/NTSC: ошибка композита (dot crawl, cross-color, размытие цвета) × сила; при 2 — вдвое сильнее.
+    // SECAM: сила уже внутри модели (gFires … gTail), исходник не подмешивается.
+    vec3 outc = m == 1 ? col : max(src + A * (col - src), vec3(0.0));
     // Двоение (эфир): отражённая копия правее контуров. Эхо берётся с исходника (blur3), цветность эха ×0.5,
     // второе эхо слабое и тёмное. a = ghost·0.35·(1 + 0.2·sin(2πt/11)), всё ×amount.
-    float ga = p_ghost * 0.35 * (1.0 + 0.2 * sin(TAU * uTime / 11.0)) * p_amount;
+    float ga = p_ghost * 0.35 * (1.0 + 0.2 * sin(TAU * uTime / 11.0)) * min(A, 1.5);
     if (ga > 0.0) {
         float dG = p_ghostDelay * W;
         outc = outc * (1.0 - 0.5 * ga) + ga * (echoAt(x - dG, vUv.y) - 0.4 * echoAt(x - 2.3 * dG, vUv.y));
