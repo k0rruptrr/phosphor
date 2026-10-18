@@ -115,6 +115,11 @@ internal sealed class SceneLayer : IDisposable
             gridIds.Clear();
         }
 
+        // Оптика прибора (свечение ламп) — под пресетом; "none" — совсем без фильтров
+        if (Scene is ISceneOptics so && name != "none")
+            stages = SceneOptics.Merge(so.OpticsStages, stages,
+                _s.Config.SceneOptionsFor(Scene.Id).GetBool("optics", true), warnings.Add);
+
         _chain = new FilterChain(_s.Gl, _s.Filters, stages, _rt.Width, _rt.Height);
         PresetName = name;
         // Проверка при каждой смене пресета: видик только для цепочки с vhs (--overlay vcr — на любом пресете)

@@ -10,9 +10,10 @@ namespace Phosphor.Scenes;
 /// и останавливаются слева направо. Иногда прогоняется профилактика катодов. Бас качает ореол, сильный удар
 /// после тишины запускает сдвиг вне очереди.
 /// </summary>
-public sealed class DivergenceScene : IScene, ISceneParams, IAudioReactive
+public sealed class DivergenceScene : IScene, ISceneParams, IAudioReactive, ISceneOptics
 {
     public string Id => "divergence";
+    public string OpticsStages => NixieGlow.Stages;
 
     public IReadOnlyList<SceneParamSpec> Params { get; } = new[]
     {

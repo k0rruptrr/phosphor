@@ -30,7 +30,10 @@
       "hi8":      [ { "id": "vhs", "tbc": 1, "jitter": 0.7, "wobble": 0.6, "noise": 0.04, "dropouts": 0.02, "badTracking": 0, "bottomSkew": 0.3, "tracking": 0, "saturation": 1.15, "bleed": 0.3, "lumaRes": 420, "chromaRes": 70, "iqShift": 0.5, "chromaClip": 0.15 },
                     { "id": "crt" } ],
       "rave":     [ { "id": "chroma", "amount": 0.6, "mod": { "amount": { "src": "beatPulse", "amount": 1.2 } } },
-                    { "id": "crt", "mod": { "bloom": { "src": "bass", "amount": 0.4 } } } ]
+                    { "id": "crt", "mod": { "bloom": { "src": "bass", "amount": 0.4 } } } ],
+      "dvb":      [ { "id": "dvb" }, { "id": "crt", "scanlines": 0.15, "bloom": 0.3 } ],
+      "mosh":     [ { "id": "datamosh", "rate": 1.5 }, { "id": "crt", "scanlines": 0.15, "bloom": 0.3 } ],
+      "sorted":   [ { "id": "pixelsort", "rate": 1.2 }, { "id": "crt", "scanlines": 0.15, "bloom": 0.3 } ]
     }
   },
   "shuffle": {

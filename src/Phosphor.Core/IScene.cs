@@ -79,6 +79,16 @@ public interface IPreferredFont
     string? PreferredFont { get; }
 }
 
+/// <summary>
+/// Необязательно. «Оптика» сцены: стадии фильтров, которые принадлежат самому прибору (свечение газоразрядных ламп),
+/// а не экрану. Хост ставит их ПЕРЕД стадиями пресета, то есть под любой пресет. JSON-массив стадий, как в filters.presets.
+/// Пользователь выключает ключом scenes.params.&lt;id&gt;.optics = false.
+/// </summary>
+public interface ISceneOptics
+{
+    string OpticsStages { get; }
+}
+
 /// <summary>Необязательно. Сцена с этим интерфейсом получает звук перед каждым Update.</summary>
 public interface IAudioReactive
 {

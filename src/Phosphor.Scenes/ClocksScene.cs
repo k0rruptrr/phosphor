@@ -8,7 +8,12 @@ namespace Phosphor.Scenes;
 public sealed class SplitFlapScene : ClocksScene { public SplitFlapScene() : base(0) { } public override string Id => "splitflap"; }
 
 /// <summary>Часы: ряд газоразрядных ламп ИН-14.</summary>
-public sealed class NixieScene : ClocksScene { public NixieScene() : base(1) { } public override string Id => "nixie"; }
+public sealed class NixieScene : ClocksScene, ISceneOptics
+{
+    public NixieScene() : base(1) { }
+    public override string Id => "nixie";
+    public string OpticsStages => NixieGlow.Stages;
+}
 
 /// <summary>Часы: мировое время с картой терминатора.</summary>
 public sealed class WorldClockScene : ClocksScene { public WorldClockScene() : base(2) { } public override string Id => "worldclock"; }
