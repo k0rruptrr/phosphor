@@ -26,6 +26,16 @@ public sealed class DimmerMethodTests
     public void Software_IgnoresDdcEvenIfItAnswers() =>
         Assert.Equal(DimMethod.Software, DimmerCurve.Method(Cfg(true, (Liar, "software")), Liar, true));
 
+    [Theory]
+    [InlineData(true, DimMethod.Both)]
+    [InlineData(false, DimMethod.Software)]
+    public void Both_BacklightPlusPicture_FallsBackWhenSilent(bool answers, DimMethod expected)
+    {
+        var c = Cfg(false, (Liar, "both"));
+        Assert.Equal(expected, DimmerCurve.Method(c, Liar, answers));
+        Assert.True(DimmerCurve.AnyBacklight(c));
+    }
+
     [Fact]
     public void Off_LeavesMonitorAlone() =>
         Assert.Equal(DimMethod.None, DimmerCurve.Method(Cfg(true, (Asus, "off")), Asus, true));

@@ -39,7 +39,8 @@ public static class DimmerCurve
     /// <summary>
     /// Чем гасить монитор. Режим из DimmerConfig.Monitors по ключу монитора (нет — auto):
     /// auto — подсветка, если включён Hardware и монитор отвечает по DDC, иначе картинка;
-    /// ddc — подсветка, если отвечает (не отвечает — картинка: гасить всё равно надо); software — только картинка
+    /// ddc — подсветка, если отвечает (не отвечает — картинка: гасить всё равно надо); both — подсветка и картинка
+    /// (минимум подсветки дешёвой панели ещё яркий); software — только картинка
     /// (монитор «врёт» по DDC); off — не трогать.
     /// </summary>
     public static DimMethod Method(DimmerConfig c, string? monitorKey, bool ddcAnswers) =>
@@ -48,6 +49,7 @@ public static class DimmerCurve
             DimmerConfig.ModeOff => DimMethod.None,
             DimmerConfig.ModeSoftware => DimMethod.Software,
             DimmerConfig.ModeDdc => ddcAnswers ? DimMethod.Backlight : DimMethod.Software,
+            DimmerConfig.ModeBoth => ddcAnswers ? DimMethod.Both : DimMethod.Software,
             _ => c.Hardware && ddcAnswers ? DimMethod.Backlight : DimMethod.Software,
         };
 
@@ -63,7 +65,8 @@ public static class DimmerCurve
 
     /// <summary>Нужна ли подсветка вообще (стоит ли запускать опрос DDC).</summary>
     public static bool AnyBacklight(DimmerConfig c) =>
-        c.Hardware || c.Monitors.Values.Any(v => string.Equals(v, DimmerConfig.ModeDdc, StringComparison.OrdinalIgnoreCase));
+        c.Hardware || c.Monitors.Values.Any(v => string.Equals(v, DimmerConfig.ModeDdc, StringComparison.OrdinalIgnoreCase)
+                                                  || string.Equals(v, DimmerConfig.ModeBoth, StringComparison.OrdinalIgnoreCase));
 }
 
-public enum DimMethod { Backlight, Software, None }
+public enum DimMethod { Backlight, Software, Both, None }

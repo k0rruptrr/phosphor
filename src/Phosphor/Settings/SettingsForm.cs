@@ -90,6 +90,7 @@ internal sealed class SettingsForm : Form
     {
         new(DimmerConfig.ModeAuto, "авто"),
         new(DimmerConfig.ModeDdc, "подсветка DDC"),
+        new(DimmerConfig.ModeBoth, "подсветка + картинка"),
         new(DimmerConfig.ModeSoftware, "картинкой"),
         new(DimmerConfig.ModeOff, "не трогать"),
     };
@@ -431,13 +432,13 @@ internal sealed class SettingsForm : Form
         Place(p, Lbl("выбранный монитор:"), 12, 446);
         _monMode.DropDownStyle = ComboBoxStyle.DropDownList;
         _monMode.Location = new Point(LabelCol(DimmerLabels), 442);
-        _monMode.Size = new Size(150, 24);
+        _monMode.Size = new Size(200, 24);
         _monMode.Items.AddRange(MonModeChoices);
         _monMode.SelectedIndexChanged += (_, _) => SetSelectedMonitorMode();
         p.Controls.Add(_monMode);
         _blink.Text = "моргнуть";
-        _blink.Location = new Point(LabelCol(DimmerLabels) + 162, 440);
-        _blink.Size = new Size(110, 28);
+        _blink.Location = new Point(LabelCol(DimmerLabels) + 210, 440);
+        _blink.Size = new Size(96, 28);
         _blink.Enabled = false;
         _blink.Click += (_, _) => StartBlink();
         p.Controls.Add(_blink);

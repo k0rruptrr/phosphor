@@ -503,12 +503,13 @@ public sealed class DimmerConfig
     public int HardwareLevel { get; set; } = 0;
     /// <summary>Множитель яркости картинки для мониторов без DDC, 0..1 (0 — чёрный экран).</summary>
     public float SoftwareLevel { get; set; } = 0.25f;
-    /// <summary>Режим по монитору: ключ MonitorIdentity.Key («PNP-ID#экземпляр») → auto / ddc / software / off.
-    /// Нет записи — auto. Нужен для мониторов, которые по DDC отвечают, но не слушаются.</summary>
+    /// <summary>Режим по монитору: ключ MonitorIdentity.Key («PNP-ID#экземпляр») → auto / ddc / both / software / off.
+    /// Нет записи — auto. both — подсветка в минимум и вдобавок затемнение картинки (у дешёвых панелей минимум подсветки ещё яркий).
+    /// Нужен для мониторов, которые по DDC отвечают, но не слушаются или слушаются слабо.</summary>
     public Dictionary<string, string> Monitors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public const string ModeAuto = "auto", ModeDdc = "ddc", ModeSoftware = "software", ModeOff = "off";
-    public static readonly string[] Modes = { ModeAuto, ModeDdc, ModeSoftware, ModeOff };
+    public const string ModeAuto = "auto", ModeDdc = "ddc", ModeBoth = "both", ModeSoftware = "software", ModeOff = "off";
+    public static readonly string[] Modes = { ModeAuto, ModeDdc, ModeBoth, ModeSoftware, ModeOff };
 }
 
 /// <summary>

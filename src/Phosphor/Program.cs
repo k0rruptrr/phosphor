@@ -201,7 +201,7 @@ internal static class Program
                     var id = devIds[i];
                     var m = DimmerCurve.Method(dimmer, id.Key, backlight?.IsHardware(id.Device) ?? false);
                     parts.Add($"{id.Device} {id.Model} [{DimmerCurve.ModeOf(dimmer, id.Key)}] → " +
-                              (m == DimMethod.Backlight ? "подсветка DDC" : m == DimMethod.Software ? "картинка" : "не трогаю"));
+                              (m switch { DimMethod.Backlight => "подсветка DDC", DimMethod.Both => "подсветка + картинка", DimMethod.Software => "картинка", _ => "не трогаю" }));
                 }
                 log.Info("диммер: " + string.Join("; ", parts));
             }
@@ -216,8 +216,10 @@ internal static class Program
                 switch (DimmerCurve.Method(dimmer, id.Key, ddc))
                 {
                     case DimMethod.Backlight:
+                    case DimMethod.Both:
                         if (dimProgress > 0)
                             backlight!.Request(id.Device, DimmerCurve.HardwareLevel(dimmer, OriginalLevel01(backlight, id.Device), dimProgress));
+                        if (DimmerCurve.Method(dimmer, id.Key, ddc) == DimMethod.Both) gains[i] = softGain; // минимум подсветки ещё яркий
                         break;
                     case DimMethod.Software:
                         gains[i] = softGain;
