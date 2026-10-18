@@ -1,12 +1,14 @@
 # install.ps1 - install PHOSPHOR as the current user's screensaver (no admin rights needed).
-# Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-TimeoutMinutes N] [-Source <folder>] [-WhatIf]
+# Usage: powershell -ExecutionPolicy Bypass -File scripts\install.ps1 [-TimeoutMinutes N] [-Source <folder>] [-CleanupOnly] [-WhatIf]
+#   -CleanupOnly: only step 0 (leftovers of older versions): nothing is copied, the registry is not touched.
 #   -Source: folder with Phosphor.exe / Phosphor.scr / phosphor.json to install from.
 #            Default: dist\Phosphor of this repo (after scripts\publish.ps1).
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [ValidateRange(0, 1440)]
     [int]$TimeoutMinutes = 0,
-    [string]$Source = ''
+    [string]$Source = '',
+    [switch]$CleanupOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +31,55 @@ if ($scrFromExe -and -not (Test-Path -LiteralPath $exeSrc)) {
 }
 
 if ($WhatIfPreference) { Write-Host "[WhatIf] dry run: nothing will be copied or written" }
+
+# 0. Clean up after older versions (Установить.bat and Setup.exe both come here)
+#  - program files the new package does not have (only .exe/.scr/.dll/.pdb/.deps.json/.runtimeconfig.json;
+#    phosphor.json, previous-settings.json, fonts\, logo\ and the Inno uninstaller are never touched);
+#  - native libraries older builds unpacked to %TEMP%\.net\Phosphor[.scr]\<hash> (~8 MB each; the next start
+#    unpacks its own again; a folder a running copy still holds is skipped);
+#  - pid logs and preview configs %TEMP%\phosphor-<pid>.log / phosphor-preview-<pid>.json older than 3 days.
+$keepNames = @('Phosphor.exe', 'Phosphor.scr') + @(Get-ChildItem -LiteralPath $srcDir -File | ForEach-Object { $_.Name })
+if (Test-Path -LiteralPath $dstDir) {
+    Get-ChildItem -LiteralPath $dstDir -File | Where-Object {
+        ($_.Extension -in '.exe', '.scr', '.dll', '.pdb' -or $_.Name -like '*.deps.json' -or $_.Name -like '*.runtimeconfig.json') -and
+        $keepNames -notcontains $_.Name -and $_.Name -notlike 'unins*'
+    } | ForEach-Object {
+        $f = $_
+        if ($PSCmdlet.ShouldProcess($f.FullName, 'Delete file left by an older version')) {
+            try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; Write-Host "Removed old file: $($f.Name)" }
+            catch { Write-Host "Could not remove $($f.Name): $($_.Exception.Message)" }
+        }
+    }
+}
+$tmp = [IO.Path]::GetTempPath()
+foreach ($app in 'Phosphor', 'Phosphor.scr') {
+    $cache = Join-Path (Join-Path $tmp '.net') $app
+    if (-not (Test-Path -LiteralPath $cache -PathType Container)) { continue }
+    $freed = 0; $n = 0
+    Get-ChildItem -LiteralPath $cache -Directory | ForEach-Object {
+        $d = $_
+        $size = (Get-ChildItem -LiteralPath $d.FullName -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        if ($PSCmdlet.ShouldProcess($d.FullName, 'Delete unpacked libraries of an older build')) {
+            # Rename first: Windows refuses to rename a folder with a loaded dll, so a running copy keeps its folder
+            # whole (a half-deleted folder could break that build's next start).
+            $gone = Join-Path $cache ('~del-' + [Guid]::NewGuid().ToString('N'))
+            try { Rename-Item -LiteralPath $d.FullName -NewName (Split-Path -Leaf $gone) -ErrorAction Stop }
+            catch { Write-Host "In use, kept: $($d.FullName)"; return }
+            try { Remove-Item -LiteralPath $gone -Recurse -Force -ErrorAction Stop; $freed += $size; $n++ }
+            catch { Write-Host "Could not fully remove $gone : $($_.Exception.Message)" }
+        }
+    }
+    if ($n -gt 0) { Write-Host ("Removed {0} unpacked build(s) from {1}: {2:N1} MB" -f $n, $cache, ($freed / 1MB)) }
+}
+$cutoff = (Get-Date).AddDays(-3)
+$old = @(Get-ChildItem -LiteralPath $tmp -File -Filter 'phosphor-*' -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -match '^phosphor-(\d+(-\d+)?\.log|preview-\d+\.json)$' -and $_.LastWriteTime -lt $cutoff })
+if ($old.Count -gt 0 -and $PSCmdlet.ShouldProcess($tmp, "Delete $($old.Count) old pid log(s)")) {
+    $old | ForEach-Object { try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop } catch { } }
+    Write-Host "Removed $($old.Count) old log(s) from $tmp"
+}
+
+if ($CleanupOnly) { Write-Host "-CleanupOnly: done"; exit 0 }
 
 # 1. Copy files
 Write-Host "Install folder: $dstDir"

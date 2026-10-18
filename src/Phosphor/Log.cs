@@ -30,6 +30,7 @@ internal sealed class Log : IDisposable
                 catch (IOException) when (n < 16) { }
             }
         }
+        LogPrune.Run(tmp, DateTime.UtcNow, Path);
     }
 
     public void Info(string m) => Write("INFO", m);
@@ -44,4 +45,42 @@ internal sealed class Log : IDisposable
     }
 
     public void Dispose() => _w.Dispose();
+}
+
+/// <summary>
+/// Подчистка %TEMP% за прошлыми запусками: phosphor-&lt;pid&gt;[-n].log и phosphor-preview-&lt;pid&gt;.json старше трёх суток
+/// (их сотни: превью и /s часто стартуют одновременно). Свой лог и занятые файлы не трогаются.
+/// </summary>
+public static class LogPrune
+{
+    public static readonly TimeSpan MaxAge = TimeSpan.FromDays(3);
+
+    private static readonly System.Text.RegularExpressions.Regex Name =
+        new(@"^phosphor-(\d+(-\d+)?\.log|preview-\d+\.json)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    public static bool IsOurs(string fileName) => Name.IsMatch(fileName);
+
+    public static int Run(string dir, DateTime nowUtc, string? keep)
+    {
+        int n = 0;
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir, "phosphor-*"))
+            {
+                if (!IsOurs(System.IO.Path.GetFileName(f))) continue;
+                if (keep is not null && string.Equals(System.IO.Path.GetFullPath(f), System.IO.Path.GetFullPath(keep), StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    if (nowUtc - File.GetLastWriteTimeUtc(f) < MaxAge) continue;
+                    File.Delete(f);
+                    n++;
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return n;
+    }
 }

@@ -50,7 +50,32 @@ if (Test-Path -LiteralPath $prevFile) {
     }
 }
 
-# 2. Remove install folder
+# 2. Leftovers in %TEMP%: unpacked native libraries of every build (%TEMP%\.net\Phosphor[.scr]) and pid logs.
+#    A folder a running copy still holds cannot be renamed and is kept whole.
+$tmp = [IO.Path]::GetTempPath()
+foreach ($app in 'Phosphor', 'Phosphor.scr') {
+    $cache = Join-Path (Join-Path $tmp '.net') $app
+    if (-not (Test-Path -LiteralPath $cache -PathType Container)) { continue }
+    Get-ChildItem -LiteralPath $cache -Directory | ForEach-Object {
+        $d = $_
+        if ($PSCmdlet.ShouldProcess($d.FullName, 'Delete unpacked libraries')) {
+            $gone = '~del-' + [Guid]::NewGuid().ToString('N')
+            try { Rename-Item -LiteralPath $d.FullName -NewName $gone -ErrorAction Stop }
+            catch { Write-Host "In use, kept: $($d.FullName)"; return }
+            Remove-Item -LiteralPath (Join-Path $cache $gone) -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    if (-not (Get-ChildItem -LiteralPath $cache -Force) -and $PSCmdlet.ShouldProcess($cache, 'Delete empty folder')) {
+        Remove-Item -LiteralPath $cache -Force -ErrorAction SilentlyContinue
+    }
+}
+$logs = @(Get-ChildItem -LiteralPath $tmp -File -Filter 'phosphor*' -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -match '^phosphor(-\d+(-\d+)?)?\.log$' -or $_.Name -match '^phosphor-preview-\d+\.json$' })
+if ($logs.Count -gt 0 -and $PSCmdlet.ShouldProcess($tmp, "Delete $($logs.Count) PHOSPHOR log(s)")) {
+    $logs | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+}
+
+# 3. Remove install folder
 if ($RegistryOnly) {
     Write-Host "-RegistryOnly: install folder left in place"
     exit 0
