@@ -17,6 +17,8 @@ public sealed unsafe class GpuHarness : IDisposable
     public int Width { get; }
     public int Height { get; }
     private readonly uint _input;
+    /// <summary>Входная текстура (для прогона FilterChain).</summary>
+    public uint InputTexture => _input;
     private readonly RenderTarget _output;
 
     public GpuHarness(int width, int height)

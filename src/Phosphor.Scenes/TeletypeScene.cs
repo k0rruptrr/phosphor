@@ -8,7 +8,7 @@ namespace Phosphor.Scenes;
 /// «Телетайп»: заголовки информационных агентств печатаются посимвольно, как на ленте в аппаратной.
 /// Данные (новости, часы) приходят готовыми от хоста; сцена сама в сеть не ходит.
 /// </summary>
-public sealed class TeletypeScene : IScene, IDataScene, IAudioReactive, ISceneParams
+public sealed class TeletypeScene : IScene, ITextScene, IDataScene, IAudioReactive, ISceneParams
 {
     // Параметры для окна настроек.
     public static readonly SceneParamSpec IdleSpec = new("idleSec", SceneParamKind.Float, 30f, 5f, 120f, "пауза перед повтором ленты, с");

@@ -84,3 +84,11 @@ public interface IAudioReactive
 {
     void OnAudio(in AudioFrame audio);
 }
+
+/// <summary>
+/// Сцена, где главное — читаемый текст (новости, телетекст, BBS, табло). На ней помехи фильтров ослабляются
+/// множителем filters.textClarity: стиль пресета остаётся, а буквы не тонут в снеге и наводках.
+/// </summary>
+public interface ITextScene
+{
+}

@@ -136,6 +136,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 | `filters.enabled` | все пресеты | Пресеты, участвующие в переборе. Не из списка — не выбираются |
 | `filters.favorites` | `[]` | Любимые пресеты: выпадают чаще (вес `shuffle.favoriteWeight`) |
 | `filters.favoritesOnly` | `false` | Только любимые пресеты (если среди доступных любимых нет — все доступные) |
+| `filters.textClarity` | `0.4` | Ясность текста: на текстовых сценах (`teletype`, `teletext`, `bbs`, `weatherboard`, `sattv`) помехи фильтров (снег, наводки, размытие, трекинг) умножаются на это значение, а полоса плохого трекинга и гашение `tv2` выключаются. 1 — как в пресете |
 | `filters.presets` | см. ниже | Пресеты: имя → массив стадий фильтров. Стадия: `{"id": "...", <параметры>, "mod": {...}}` |
 | `filters.presets.*.mod` | — | Модуляция параметра стадии сигналом: `{"параметр": {"src": "...", "amount": N}}`. Источники: звук — `level`, `bass`, `mid`, `high`, `beat`, `beatPulse`; состояние — `breath`, `night`, `fatigue`, `transition` |
 | `shuffle.scenes` | `true` | Менять сцены по таймеру |

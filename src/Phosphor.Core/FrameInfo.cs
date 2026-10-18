@@ -9,7 +9,8 @@ public readonly record struct FrameInfo(
     int Height,
     int MonitorIndex, // 0..N-1
     AudioFrame Audio,
-    Organism Organism = default)
+    Organism Organism = default,
+    float ArtifactScale = 1f) // текстовая сцена: артефактные параметры фильтров (ParamSpec.Clean) × это, 1 — как в пресете
 {
     /// <summary>Значение источника модуляции: звук ("bass", "beatPulse"...) или организм ("breath", "night"...).</summary>
     public float Get(string source) => Array.IndexOf(Organism.Sources, source) >= 0

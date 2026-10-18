@@ -134,6 +134,9 @@ public sealed class FilterChain : IDisposable
             float v = st.Base[spec.Name];
             foreach (var m in st.Mods)
                 if (m.Param == spec.Name) v += frame.Get(m.Source) * m.Amount;
+            // Текстовая сцена: артефакт подтягивается к чистому концу шкалы (переключатели > 0.5 при этом гаснут)
+            if (spec.Clean is float clean && frame.ArtifactScale < 1f)
+                v = spec.TextOff ? clean : clean + (v - clean) * Math.Max(frame.ArtifactScale, 0f);
             st.Resolved[spec.Name] = Math.Clamp(v, spec.Min, spec.Max);
         }
     }

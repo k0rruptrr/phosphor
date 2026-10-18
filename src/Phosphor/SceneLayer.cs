@@ -163,7 +163,9 @@ internal sealed class SceneLayer : IDisposable
     /// <summary>Шаг фильтров: цепочка над Target (уже с OSD видика, если он нужен). Результат — Output.</summary>
     public void Filter(float time, float dt, long frame, in AudioFrame audio, in Organism organism)
     {
-        var fi = new FrameInfo(time, dt, frame, _rt.Width, _rt.Height, _index, audio, organism);
+        // Текстовая сцена (новости, телетекст…): помехи фильтров слабее, чтобы буквы читались
+        float clarity = Scene is ITextScene ? Math.Clamp(_s.Config.Filters.TextClarity, 0f, 1f) : 1f;
+        var fi = new FrameInfo(time, dt, frame, _rt.Width, _rt.Height, _index, audio, organism, clarity);
         Output = _chain.Process(_rt.Texture, fi);
     }
 

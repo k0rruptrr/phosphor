@@ -12,7 +12,7 @@ public sealed class ChromaFilter : ShaderFilter
 {
     private static readonly IReadOnlyList<ParamSpec> _params = new ParamSpec[]
     {
-        new ParamSpec("amount", 1f, 0f, 12f, null, "Величина расхождения каналов в пикселях", "расхождение цветов"),
+        new ParamSpec("amount", 1f, 0f, 12f, null, "Величина расхождения каналов в пикселях", "расхождение цветов", Clean: 0f),
         new ParamSpec("radial", 1f, 0f, 1f, null, "1 = радиально от центра, 0 = равномерный сдвиг в направлении angle", "радиальность"),
         new ParamSpec("angle", 0f, 0f, 360f, null, "Направление равномерного сдвига в градусах (0 = вправо)", "направление"),
         new ParamSpec("samples", 3f, 1f, 8f, null, "Число выборок спектра (1 = классика)", "спектр"),

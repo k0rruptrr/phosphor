@@ -54,6 +54,7 @@ internal sealed class SettingsForm : Form
     private readonly PickList _presets;
     private readonly ComboBox _activePreset = new();
     private readonly CheckBox _presetFavOnly = new();
+    private readonly NumBox _textClarity = new();
     // Оверлеи
     private readonly PickList _overlays;
     // Перебор
@@ -285,6 +286,10 @@ internal sealed class SettingsForm : Form
         _presetFavOnly.Location = new Point(12, 48);
         _presetFavOnly.CheckedChanged += (_, _) => _model.Config.Filters.FavoritesOnly = _presetFavOnly.Checked;
         p.Controls.Add(_presetFavOnly);
+        // Текстовые сцены (новости, телетекст, BBS…): помехи пресета × ясность, чтобы буквы читались
+        Place(p, Lbl("ясность текста, %"), 230, 52);
+        Num(p, _textClarity, 0, 100, 0, 400, 48, 90);
+        _tip.SetToolTip(_textClarity, "На текстовых сценах помехи фильтров умножаются на это: 100 — как в пресете, 0 — без помех");
 
         Button(p, "все вкл", 12, 80, 120, () => { _model.SetAllPresets(true); RefreshPresetsAfterChange(); });
         Button(p, "все выкл", 140, 80, 120, () => { _model.SetAllPresets(false); RefreshPresetsAfterChange(); });
@@ -676,6 +681,7 @@ internal sealed class SettingsForm : Form
         _sceneFavOnly.Checked = c.Scenes.FavoritesOnly;
         _favWeight.Value = Clamp(c.Shuffle.FavoriteWeight, 1, 10);
         _presetFavOnly.Checked = c.Filters.FavoritesOnly;
+        _textClarity.Value = Clamp(c.Filters.TextClarity * 100, 0, 100);
 
         FillActiveCombo(c.Filters.Active);
 
@@ -711,6 +717,7 @@ internal sealed class SettingsForm : Form
         c.Scenes.FavoritesOnly = _sceneFavOnly.Checked;
         c.Shuffle.FavoriteWeight = (float)_favWeight.Value;
         c.Filters.FavoritesOnly = _presetFavOnly.Checked;
+        c.Filters.TextClarity = (float)_textClarity.Value / 100f;
         if (_activePreset.SelectedItem is Choice active) c.Filters.Active = active.Value;
 
         c.Shuffle.Scenes = _shufScenes.Checked;

@@ -8,7 +8,7 @@ namespace Phosphor.Scenes;
 /// над каждой строкой пластинок — строка-«тень» из '▄'. Данные (погода, часы) приходят снимками от хоста;
 /// сцена сама не ходит в сеть и не читает реальное время, кроме снимка "clock".
 /// </summary>
-public sealed class WeatherBoardScene : IScene, IDataScene, IPreferredRows, IAudioReactive, ISceneParams
+public sealed class WeatherBoardScene : IScene, ITextScene, IDataScene, IPreferredRows, IAudioReactive, ISceneParams
 {
     // Параметры для окна настроек.
     public static readonly SceneParamSpec TickerSpec = new("tickerSpeed", SceneParamKind.Float, 8f, 0f, 40f, "скорость бегущей строки");

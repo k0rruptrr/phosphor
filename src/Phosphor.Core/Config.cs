@@ -77,6 +77,7 @@ public sealed class PhosphorConfig
         Dimmer.SoftwareLevel = Math.Clamp(Dimmer.SoftwareLevel, 0f, 1f);
         Network.FireRadiusKm = Math.Clamp(Network.FireRadiusKm, 100, 1500);
         Network.FlightRadiusNm = Math.Clamp(Network.FlightRadiusNm, 20, 250);
+        Filters.TextClarity = Math.Clamp(Filters.TextClarity, 0f, 1f);
     }
 
     /// <summary>
@@ -403,6 +404,9 @@ public sealed class FiltersConfig
     public List<string>? Seen { get; set; }
     /// <summary>Active = "shuffle": стартовый пресет случайный из доступных (это не ошибка конфига).</summary>
     public const string ShuffleActive = "shuffle";
+    /// <summary>Ясность текста: на текстовых сценах (ITextScene) артефакты фильтров (помехи, снег, размытие, трекинг)
+    /// умножаются на это значение. 1 — как в пресете, 0 — без помех; 0.4 — стиль остаётся, буквы читаются.</summary>
+    public float TextClarity { get; set; } = 0.4f;
 }
 
 public sealed class ShuffleConfig

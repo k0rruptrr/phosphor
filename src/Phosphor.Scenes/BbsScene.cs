@@ -10,7 +10,7 @@ namespace Phosphor.Scenes;
 /// Экран — виртуальный терминал 80 колонок × высота сетки (25 строк), по центру сетки. Вся печать идёт со скоростью
 /// модема (baud/10 символов в секунду). Сцена без сети и без звука.
 /// </summary>
-public sealed class BbsScene : IScene, ISceneParams, IPreferredRows
+public sealed class BbsScene : IScene, ITextScene, ISceneParams, IPreferredRows
 {
     // Параметры для окна настроек.
     public static readonly SceneParamSpec BaudSpec = new("baud", SceneParamKind.Choice, 0f, 0f, 3f, "скорость модема, бит/с",

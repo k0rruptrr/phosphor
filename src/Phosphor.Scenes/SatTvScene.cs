@@ -10,7 +10,7 @@ namespace Phosphor.Scenes;
 /// и компактная центрированная таблица каналов. Всё уезжает вверх по строке за scrollSec, затем пауза и следующий спутник.
 /// Данные — снимки хоста ("sattv"); без данных — экран поиска спутника (ничего не выдумываем).
 /// </summary>
-public sealed class SatTvScene : IScene, IDataScene, IPreferredRows, ISceneParams
+public sealed class SatTvScene : IScene, ITextScene, IDataScene, IPreferredRows, ISceneParams
 {
     // Крупная ячейка: на экран ~30 строк, как на референсах (текст крупный, шапка занимает ширину).
     public int PreferredRows => 30;
