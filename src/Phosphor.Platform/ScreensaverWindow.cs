@@ -5,7 +5,7 @@ using Silk.NET.OpenGL;
 namespace Phosphor.Platform;
 
 /// <summary>Команда от стрелок в заставке и оконном режиме: сцена или пресет (фильтры).</summary>
-public enum UserCommand { NextScene, PrevScene, NextPreset, PrevPreset }
+public enum UserCommand { NextScene, PrevScene, NextPreset, PrevPreset, ToggleDimmer }
 
 /// <summary>Что делать с клавишей: Close — выйти; PassThrough — отдать Windows (громкость, медиа); Command — команда.</summary>
 public enum KeyAction { Close, PassThrough, Command }
@@ -59,7 +59,7 @@ public sealed class ScreensaverWindow : IDisposable
 
     /// <summary>
     /// Классификация клавиши. fullscreen/windowed — режим окна (превью и скрытое окно — оба false: всё отдать Windows).
-    /// Стрелки — команды в обоих режимах. Медиа/громкость: в /s при ignoreMediaKeys — отдать Windows, иначе выход.
+    /// Стрелки и D (диммер) — команды в обоих режимах. Медиа/громкость: в /s при ignoreMediaKeys — отдать Windows, иначе выход.
     /// В /s любая другая клавиша — выход; в /w выход только по Esc.
     /// </summary>
     public static KeyAction Classify(bool fullscreen, bool windowed, nint vk, bool ignoreMediaKeys, out UserCommand command)
@@ -73,6 +73,7 @@ public sealed class ScreensaverWindow : IDisposable
             case Win32.VK_LEFT: command = UserCommand.PrevScene; return KeyAction.Command;
             case Win32.VK_UP: command = UserCommand.NextPreset; return KeyAction.Command;
             case Win32.VK_DOWN: command = UserCommand.PrevPreset; return KeyAction.Command;
+            case Win32.VK_D: command = UserCommand.ToggleDimmer; return KeyAction.Command;
         }
 
         if (vk >= Win32.VK_VOLUME_MUTE && vk <= Win32.VK_MEDIA_PLAY_PAUSE)

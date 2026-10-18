@@ -18,6 +18,7 @@ public class KeyClassifyTests
     [InlineData(0x25, UserCommand.PrevScene)] // VK_LEFT
     [InlineData(0x26, UserCommand.NextPreset)] // VK_UP
     [InlineData(0x28, UserCommand.PrevPreset)] // VK_DOWN
+    [InlineData(0x44, UserCommand.ToggleDimmer)] // D
     public void Arrows_AreCommands_InFullscreenAndWindowed(int vkValue, UserCommand expected)
     {
         nint vk = vkValue;

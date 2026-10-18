@@ -364,7 +364,7 @@ public sealed class PhosphorConfig
       "audio": { "enabled": true, "sensitivity": 1.0, "maxPulse": 0.8, "minBeatIntervalMs": 250 },
       "network": { "enabled": true, "city": "Москва", "news": ["nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc"], "calmNews": true, "teletext": ["svt", "nos"], "satellite": ["meteosat", "himawari", "viirs"] },
       "screen": { "trail": 0 },
-      "dimmer": { "enabled": false, "delayMin": 10, "fadeSec": 60, "hardware": true, "hardwareLevel": 0, "softwareLevel": 0.25 },
+      "dimmer": { "enabled": false, "delayMin": 10, "fadeSec": 60, "hardware": true, "hardwareLevel": 0, "softwareLevel": 0.25, "schedule": "always", "from": "22:00", "to": "08:00" },
       "exit": { "mouseThresholdPx": 12, "ignoreMouseMove": true, "ignoreMediaKeys": true }
     }
     """;
@@ -514,6 +514,13 @@ public sealed class DimmerConfig
     /// Нет записи — auto. both — подсветка в минимум и вдобавок затемнение картинки (у дешёвых панелей минимум подсветки ещё яркий).
     /// Нужен для мониторов, которые по DDC отвечают, но не слушаются или слушаются слабо.</summary>
     public Dictionary<string, string> Monitors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Когда гасить: always — всегда (после DelayMin), hours — только в окне From..To (окно может идти через полночь).</summary>
+    public string Schedule { get; set; } = ScheduleAlways;
+    /// <summary>Начало и конец окна для Schedule = hours, «ЧЧ:ММ» местного времени. Нечитаемое значение — окно не ограничивает.</summary>
+    public string From { get; set; } = "22:00";
+    public string To { get; set; } = "08:00";
+
+    public const string ScheduleAlways = "always", ScheduleHours = "hours";
 
     public const string ModeAuto = "auto", ModeDdc = "ddc", ModeBoth = "both", ModeSoftware = "software", ModeOff = "off";
     public static readonly string[] Modes = { ModeAuto, ModeDdc, ModeBoth, ModeSoftware, ModeOff };

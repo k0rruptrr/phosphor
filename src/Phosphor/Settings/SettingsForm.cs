@@ -76,7 +76,8 @@ internal sealed class SettingsForm : Form
     private readonly RadioButton _screenCrt = new(), _screenFlat = new();
     private readonly Button _presetSaveAs = new(), _presetBuiltin = new(), _presetDelete = new();
     // Диммер
-    private readonly CheckBox _dimEnabled = new(), _dimHw = new();
+    private readonly CheckBox _dimEnabled = new(), _dimHw = new(), _dimHours = new();
+    private readonly TextBox _dimFrom = new(), _dimTo = new();
     private readonly NumBox _dimDelay = new(), _dimFade = new(), _dimHwLevel = new(), _dimSwLevel = new();
     private readonly Button _probe = new();
     private readonly Label _probeStatus = new();
@@ -399,56 +400,67 @@ internal sealed class SettingsForm : Form
 
         Check(p, _exitMouse, "не выходить от движения мыши", 12, 266);
         Check(p, _exitMedia, "не выходить от медиаклавиш (громкость, плеер)", 12, 300);
-        Place(p, Lbl("←/→ — сцены, ↑/↓ — фильтры; клик или клавиша — выход", Theme.Muted), 12, 334);
+        Place(p, Lbl("←/→ — сцены, ↑/↓ — фильтры, D — диммер; клик или клавиша — выход", Theme.Muted), 12, 334);
     }
 
     private void BuildDimmerPage(Panel p)
     {
         Check(p, _dimEnabled, "гасить экран, пока работает заставка", 12, 12);
 
-        Place(p, Lbl("через, мин"), 12, 52);
-        Num(p, _dimDelay, 0, 240, 0, LabelCol(DimmerLabels), 48, 90);
-        Place(p, Lbl("длительность затемнения, с"), 12, 88);
-        Num(p, _dimFade, 0, 600, 0, LabelCol(DimmerLabels), 84, 90);
+        // Расписание: только в окне часов (через полночь — нормально); D в заставке включает/выключает вручную
+        Check(p, _dimHours, "только с", 12, 48);
+        _dimFrom.Location = new Point(LabelCol(DimmerLabels), 46);
+        _dimFrom.Size = new Size(64, 24);
+        p.Controls.Add(_dimFrom);
+        Place(p, Lbl("до"), LabelCol(DimmerLabels) + 74, 50);
+        _dimTo.Location = new Point(LabelCol(DimmerLabels) + 104, 46);
+        _dimTo.Size = new Size(64, 24);
+        p.Controls.Add(_dimTo);
+        Place(p, Lbl("D — вкл/выкл", Theme.Muted), LabelCol(DimmerLabels) + 184, 50);
 
-        Check(p, _dimHw, "управлять подсветкой (DDC/CI)", 12, 126);
-        Place(p, Lbl("целевая яркость подсветки, %"), 12, 162);
-        Num(p, _dimHwLevel, 0, 100, 0, LabelCol(DimmerLabels), 158, 90);
-        Place(p, Lbl("яркость картинки без DDC, %"), 12, 198);
-        Num(p, _dimSwLevel, 0, 100, 0, LabelCol(DimmerLabels), 194, 90);
+        Place(p, Lbl("через, мин"), 12, 88);
+        Num(p, _dimDelay, 0, 240, 0, LabelCol(DimmerLabels), 84, 90);
+        Place(p, Lbl("длительность затемнения, с"), 12, 124);
+        Num(p, _dimFade, 0, 600, 0, LabelCol(DimmerLabels), 120, 90);
+
+        Check(p, _dimHw, "управлять подсветкой (DDC/CI)", 12, 162);
+        Place(p, Lbl("целевая яркость подсветки, %"), 12, 198);
+        Num(p, _dimHwLevel, 0, 100, 0, LabelCol(DimmerLabels), 194, 90);
+        Place(p, Lbl("яркость картинки без DDC, %"), 12, 234);
+        Num(p, _dimSwLevel, 0, 100, 0, LabelCol(DimmerLabels), 230, 90);
 
         _probe.Text = "проверить мониторы";
-        _probe.Location = new Point(12, 238);
+        _probe.Location = new Point(12, 274);
         _probe.Size = new Size(200, 28);
         _probe.Click += (_, _) => StartProbe();
         p.Controls.Add(_probe);
         _probeStatus.AutoSize = true;
-        _probeStatus.Location = new Point(224, 244);
+        _probeStatus.Location = new Point(224, 280);
         _probeStatus.Text = "только чтение: яркость не меняется";
         _probeStatus.ForeColor = Theme.Muted;
         p.Controls.Add(_probeStatus);
 
-        _monitors.Location = new Point(12, 280);
+        _monitors.Location = new Point(12, 316);
         _monitors.Size = new Size(568, 150);
         StyleMonitorList();
         p.Controls.Add(_monitors);
 
         // Режим выбранного монитора: DDC «врёт» у некоторых (отвечает, но не слушается) — тогда «картинкой»
-        Place(p, Lbl("выбранный монитор:"), 12, 446);
+        Place(p, Lbl("выбранный монитор:"), 12, 482);
         _monMode.DropDownStyle = ComboBoxStyle.DropDownList;
-        _monMode.Location = new Point(LabelCol(DimmerLabels), 442);
+        _monMode.Location = new Point(LabelCol(DimmerLabels), 478);
         _monMode.Size = new Size(200, 24);
         _monMode.Items.AddRange(MonModeChoices);
         _monMode.SelectedIndexChanged += (_, _) => SetSelectedMonitorMode();
         p.Controls.Add(_monMode);
         _blink.Text = "моргнуть";
-        _blink.Location = new Point(LabelCol(DimmerLabels) + 210, 440);
+        _blink.Location = new Point(LabelCol(DimmerLabels) + 210, 476);
         _blink.Size = new Size(96, 28);
         _blink.Enabled = false;
         _blink.Click += (_, _) => StartBlink();
         p.Controls.Add(_blink);
         _monitors.SelectedIndexChanged += (_, _) => ShowSelectedMonitorMode();
-        Place(p, Lbl("«моргнуть» на секунду гасит подсветку: видно, слушается ли монитор", Theme.Muted), 12, 478);
+        Place(p, Lbl("«моргнуть» на секунду гасит подсветку: видно, слушается ли монитор", Theme.Muted), 12, 514);
     }
 
     /// <summary>Таблица мониторов рисуется сама: нативные белые заголовки и линии не нужны.</summary>
@@ -696,6 +708,9 @@ internal sealed class SettingsForm : Form
         _exitMedia.Checked = c.Exit.IgnoreMediaKeys;
 
         _dimEnabled.Checked = c.Dimmer.Enabled;
+        _dimHours.Checked = string.Equals(c.Dimmer.Schedule, DimmerConfig.ScheduleHours, StringComparison.OrdinalIgnoreCase);
+        _dimFrom.Text = c.Dimmer.From;
+        _dimTo.Text = c.Dimmer.To;
         _dimDelay.Value = Clamp(c.Dimmer.DelayMin, 0, 240);
         _dimFade.Value = Clamp(c.Dimmer.FadeSec, 0, 600);
         _dimHw.Checked = c.Dimmer.Hardware;
@@ -731,6 +746,10 @@ internal sealed class SettingsForm : Form
         c.Exit.IgnoreMediaKeys = _exitMedia.Checked;
 
         c.Dimmer.Enabled = _dimEnabled.Checked;
+        c.Dimmer.Schedule = _dimHours.Checked ? DimmerConfig.ScheduleHours : DimmerConfig.ScheduleAlways;
+        // Нечитаемое время не сохраняем — остаётся прежнее
+        if (DimmerSchedule.ParseTime(_dimFrom.Text) is TimeSpan from) c.Dimmer.From = from.ToString(@"hh\:mm");
+        if (DimmerSchedule.ParseTime(_dimTo.Text) is TimeSpan to) c.Dimmer.To = to.ToString(@"hh\:mm");
         c.Dimmer.DelayMin = (float)_dimDelay.Value;
         c.Dimmer.FadeSec = (float)_dimFade.Value;
         c.Dimmer.Hardware = _dimHw.Checked;

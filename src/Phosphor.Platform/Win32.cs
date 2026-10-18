@@ -125,6 +125,7 @@ internal static class Win32
 
     public const nint VK_ESCAPE = 0x1B;
     public const nint VK_LEFT = 0x25;
+    public const nint VK_D = 0x44;
     public const nint VK_UP = 0x26;
     public const nint VK_RIGHT = 0x27;
     public const nint VK_DOWN = 0x28;

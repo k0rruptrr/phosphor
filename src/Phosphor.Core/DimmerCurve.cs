@@ -70,3 +70,55 @@ public static class DimmerCurve
 }
 
 public enum DimMethod { Backlight, Software, Both, None }
+
+/// <summary>Расписание диммера (DimmerConfig.Schedule/From/To).</summary>
+public static class DimmerSchedule
+{
+    /// <summary>«ЧЧ:ММ» → время суток; null — не разобрано.</summary>
+    public static TimeSpan? ParseTime(string? s) =>
+        TimeSpan.TryParseExact(s?.Trim(), new[] { @"h\:mm", @"hh\:mm" }, System.Globalization.CultureInfo.InvariantCulture, out var t)
+        && t < TimeSpan.FromDays(1) ? t : null;
+
+    /// <summary>Разрешено ли гасить в это время суток. always или нечитаемое окно — всегда; From == To — всегда.</summary>
+    public static bool InWindow(DimmerConfig c, TimeSpan timeOfDay)
+    {
+        if (!string.Equals(c.Schedule, DimmerConfig.ScheduleHours, StringComparison.OrdinalIgnoreCase)) return true;
+        if (ParseTime(c.From) is not TimeSpan from || ParseTime(c.To) is not TimeSpan to || from == to) return true;
+        return from < to ? timeOfDay >= from && timeOfDay < to      // окно внутри суток
+                         : timeOfDay >= from || timeOfDay < to;     // через полночь (22:00–08:00)
+    }
+}
+
+/// <summary>
+/// Состояние диммера во время заставки: расписание и ручное включение клавишей D.
+/// Затемнение = кривая задержки (DimmerCurve.Progress) × «ворота», которые плавно открываются и закрываются за FadeSec —
+/// так диммер мягко включается, когда наступает окно, и мягко отпускает мониторы, когда оно кончается или нажата D.
+/// </summary>
+public sealed class DimmerGate
+{
+    private float _g;
+    private bool _lastTarget;
+
+    /// <summary>Ручное решение клавишей D: null — по расписанию, true — гасить сейчас (без задержки), false — не гасить.</summary>
+    public bool? Manual { get; private set; }
+
+    /// <summary>Клавиша D: переключить относительно того, что сейчас должно быть. Возвращает новое решение.</summary>
+    public bool Toggle()
+    {
+        Manual = !_lastTarget;
+        return Manual.Value;
+    }
+
+    /// <summary>Шаг: прогресс затемнения 0..1. elapsedSec — время работы заставки, timeOfDay — местное время.</summary>
+    public float Update(DimmerConfig c, double elapsedSec, TimeSpan timeOfDay, float dt)
+    {
+        bool target = Manual ?? (c.Enabled && DimmerSchedule.InWindow(c, timeOfDay));
+        _lastTarget = target;
+        float step = c.FadeSec <= 0f ? 1f : Math.Max(dt, 0f) / c.FadeSec;
+        _g = target ? Math.Min(1f, _g + step) : Math.Max(0f, _g - step);
+        if (_g <= 0f) return 0f;
+        float gate = _g * _g * (3f - 2f * _g);
+        float delay = Manual == true ? 1f : DimmerCurve.Progress(c, elapsedSec);
+        return gate * delay;
+    }
+}

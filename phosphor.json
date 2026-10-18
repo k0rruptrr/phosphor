@@ -51,6 +51,6 @@
   "audio": { "enabled": true, "sensitivity": 1.0, "maxPulse": 0.8, "minBeatIntervalMs": 250 },
   "network": { "enabled": true, "city": "Москва", "news": ["nplus1", "naked", "habr", "nasa", "esa", "hn", "tass", "bbc"], "calmNews": true, "teletext": ["svt", "nos"], "satellite": ["meteosat", "himawari", "viirs"] },
   "screen": { "trail": 0 },
-  "dimmer": { "enabled": false, "delayMin": 10, "fadeSec": 60, "hardware": true, "hardwareLevel": 0, "softwareLevel": 0.25 },
+  "dimmer": { "enabled": false, "delayMin": 10, "fadeSec": 60, "hardware": true, "hardwareLevel": 0, "softwareLevel": 0.25, "schedule": "always", "from": "22:00", "to": "08:00" },
   "exit": { "mouseThresholdPx": 12, "ignoreMouseMove": true, "ignoreMediaKeys": true }
 }

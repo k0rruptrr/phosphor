@@ -134,6 +134,7 @@ internal static class Program
         var devNames = devIds.Select(m => m.Device).ToArray();
         var gains = new float[slots.Count];
         bool dimLogged = false, dimStarted = false;
+        var dimGate = new DimmerGate();   // расписание диммера и клавиша D
         // Dispose восстанавливает яркость: using — и при выходе, и при исключении.
         using var backlight = args.Mode == LaunchMode.Screensaver && ((dimmer.Enabled && DimmerCurve.AnyBacklight(dimmer)) || File.Exists(journalPath))
             ? Backlight.Start(journalPath, m => log.Info(m))
@@ -168,7 +169,11 @@ internal static class Program
 
             var af = audio?.Tick(dt) ?? AudioFrame.Silent;
             // Стрелки в заставке/оконном: команды дирижёру (всем мониторам), до его обычного хода
-            while (win.TryTakeCommand(out UserCommand cmd)) director.Command(cmd, af);
+            while (win.TryTakeCommand(out UserCommand cmd))
+            {
+                if (cmd == UserCommand.ToggleDimmer) log.Info(dimGate.Toggle() ? "клавиша D: диммер включён" : "клавиша D: диммер выключен");
+                else director.Command(cmd, af);
+            }
             if (af.Beat) beats++;
             if (af.Bpm > 0) lastBpm = af.Bpm;
             if (af.Active != wasActive)
@@ -190,7 +195,7 @@ internal static class Program
 
             // Диммер: прогресс по времени заставки. Подсветка — заявки Request (только когда пора, progress > 0);
             // мониторы без DDC — множитель картинки.
-            float dimProgress = args.Mode == LaunchMode.Screensaver ? DimmerCurve.Progress(dimmer, now) : 0f;
+            float dimProgress = args.Mode == LaunchMode.Screensaver ? dimGate.Update(dimmer, now, DateTime.Now.TimeOfDay, dt) : 0f;
             if (dimProgress > 0 && !dimStarted) { dimStarted = true; log.Info("диммер: гашу"); }
             if (!dimLogged && dimmer.Enabled && args.Mode == LaunchMode.Screensaver && (backlight is null || backlight.Ready))
             {
@@ -217,7 +222,8 @@ internal static class Program
                 {
                     case DimMethod.Backlight:
                     case DimMethod.Both:
-                        if (dimProgress > 0)
+                        // После начала затемнения заявки идут и при progress 0: так подсветка возвращается, когда окно кончилось или нажата D
+                        if (dimProgress > 0 || dimStarted)
                             backlight!.Request(id.Device, DimmerCurve.HardwareLevel(dimmer, OriginalLevel01(backlight, id.Device), dimProgress));
                         if (DimmerCurve.Method(dimmer, id.Key, ddc) == DimMethod.Both) gains[i] = softGain; // минимум подсветки ещё яркий
                         break;
