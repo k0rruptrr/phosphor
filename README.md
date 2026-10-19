@@ -475,7 +475,7 @@ PHOSPHOR берёт открытые данные сторонних серви�
 
 Шрифты (`assets/fonts`) — IBM Plex Mono, VT323 и Press Start 2P (лицензия SIL Open Font License 1.1, тексты лежат рядом: `OFL-IBMPlexMono.txt`, `OFL-VT323.txt`, `OFL-PressStart2P.txt`); Fixedsys Excelsior (public domain / CC0, `LICENSE-FixedsysExcelsior.txt`); Bedstead (CC0 1.0, `COPYING-Bedstead.txt`).
 
-## Сеть и Fort Firewall
+## Сеть и Фаерволы
 
 Новости, погода и телетекст качаются в фоне и кешируются. Превью (`/p`) сеть не использует.
 
