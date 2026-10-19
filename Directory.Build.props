@@ -10,7 +10,7 @@
     <!-- Обычная сборка (без AgentId, например dotnet publish) кладёт obj/bin внутрь проекта; сборки с AgentId
          не должны затягивать оттуда сгенерированные AssemblyInfo.cs как исходники. -->
     <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
-    <Version>0.13.1</Version>
+    <Version>0.13.2</Version>
   </PropertyGroup>
   <!-- Дата сборки — для строки версии в логе (AppInfo.BuildDate) -->
   <ItemGroup>
