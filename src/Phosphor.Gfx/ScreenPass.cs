@@ -75,9 +75,9 @@ public sealed class ScreenPass : IDisposable
 
         float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
-        // Signed distance до скруглённого прямоугольника с полуразмерами half и радиусом r (px).
-        float sdRR(vec2 p, vec2 half, float r) {
-            vec2 q = abs(p) - (half - r);
+        // Signed distance до скруглённого прямоугольника с полуразмерами hs и радиусом r (px).
+        float sdRR(vec2 p, vec2 hs, float r) {
+            vec2 q = abs(p) - (hs - r);
             return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
         }
 
